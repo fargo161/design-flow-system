@@ -42,6 +42,8 @@ PSG is not modified by this repository. The pinned commit identifies the archite
 - Qualified-answer preservation and unresolved registers
 - Explicit conflict relationships and supersession
 - Supersession-aware concept current/affected/history state
+- The workspace integrity boundary and its cross-module wiring
+- Immutable local concept and TRACE snapshots
 - Core-concept registration, revision, deprecation, maturity, and provenance lineage
 - Living application document generation
 - Future implementation, context, specification, and audit compiler boundaries

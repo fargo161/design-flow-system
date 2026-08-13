@@ -11,8 +11,8 @@ class CoreConceptDocumentTests(unittest.TestCase):
         self.assertEqual(("decision.movement-target-identity",), concept.source_decisions)
         self.assertEqual(("Only relational movement is in scope.",), concept.boundaries)
         current_source = concept.provenance["current_source"]
-        self.assertEqual(["B"], current_source["owner_answer"])
-        self.assertEqual(["A"], current_source["recommendation_was"])
+        self.assertEqual(("B",), current_source["owner_answer"])
+        self.assertEqual(("A",), current_source["recommendation_was"])
         self.assertTrue(concept.trace_refs)
 
     def test_living_document_renders_authority_status_provenance_and_trace(self) -> None:
@@ -24,6 +24,8 @@ class CoreConceptDocumentTests(unittest.TestCase):
         self.assertIn("Status: `CURRENT`", markdown)
         self.assertIn("Authoritative owner value: `B`", markdown)
         self.assertIn("Historical recommendation: `A`", markdown)
+        self.assertIn("Current provenance: decision `decision.movement-target-identity`", markdown)
+        self.assertNotIn("invalid provenance shape", markdown)
         self.assertIn("## Unresolved Register", markdown)
         self.assertIn("## Superseded / Historical State", markdown)
         self.assertIn("## TRACE / Recent Changes", markdown)

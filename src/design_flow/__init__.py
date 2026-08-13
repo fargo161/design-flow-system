@@ -1,4 +1,4 @@
-"""Public API for the Design Flow System v0.1.1 stabilized foundation."""
+"""Public API; DesignFlowWorkspace is the canonical full-integrity boundary."""
 
 from .concepts import CoreConceptRegistry
 from .decisions import CurrentStateCompiler, DecisionLedger, DecisionSynthesizer

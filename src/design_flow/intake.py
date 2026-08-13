@@ -22,7 +22,12 @@ from .trace import TraceLog
 
 
 class DesignFlowWorkspace:
-    """Convenience facade that preserves the model's semantic separations."""
+    """Canonical integrity boundary for complete Design Flow behavior.
+
+    The workspace owns the shared TRACE and wires decision supersession to
+    concept invalidation. Lower-level classes remain useful primitives, but a
+    caller composing them directly must provide equivalent cross-module wiring.
+    """
 
     def __init__(self, project: Project) -> None:
         self.project = project

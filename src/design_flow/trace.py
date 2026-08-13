@@ -5,7 +5,13 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import Any
 
-from .model import Decision, DecisionStatus, TraceAction, TraceRecord
+from .model import (
+    Decision,
+    DecisionStatus,
+    TraceAction,
+    TraceRecord,
+    freeze_semantic_value,
+)
 
 
 class TraceLog:
@@ -28,7 +34,7 @@ class TraceLog:
                 action=action,
                 entity_type=entity_type,
                 entity_id=entity_id,
-                details=dict(details),
+                details=freeze_semantic_value(details),
             )
         )
         return trace_id
@@ -69,9 +75,9 @@ class TraceLog:
             expected = {
                 "source_round": decision.source_round,
                 "source_question": decision.source_question,
-                "authoritative_value": list(decision.authoritative_value),
-                "rule_source_value": list(decision.provenance.rule_source_value),
-                "recommendation_was": list(decision.provenance.recommendation_was),
+                "authoritative_value": tuple(decision.authoritative_value),
+                "rule_source_value": tuple(decision.provenance.rule_source_value),
+                "recommendation_was": tuple(decision.provenance.recommendation_was),
                 "canonical_rule": decision.canonical_rule,
             }
             mismatch = next(
@@ -108,7 +114,7 @@ class TraceLog:
                 and record.entity_type == "decision"
                 and record.entity_id == decision.decision_id
                 and record.details.get("canonical_rule") == decision.canonical_rule
-                and record.details.get("authoritative_value") == list(decision.authoritative_value)
+                and record.details.get("authoritative_value") == tuple(decision.authoritative_value)
                 and record.details.get("source_round") == decision.source_round
                 and record.details.get("source_question") == decision.source_question
             ):

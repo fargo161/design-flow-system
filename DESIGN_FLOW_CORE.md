@@ -93,7 +93,7 @@ The ledger supports explicit relations:
 - `supersedes`
 - `unresolved_conflict`
 
-There is no universal contradiction solver. A caller or owner declares a relationship. When supersession is authorized, the ledger marks the earlier decision `SUPERSEDED`, points the newer decision back to it, retains both records, and appends a TRACE event.
+There is no universal contradiction solver. A caller or owner declares a relationship. Supersession rejects self-links, ineligible replacements, duplicate edges, and cycles before mutation. Valid chains retain transitive predecessor identity. When supersession is authorized, the ledger marks the earlier decision `SUPERSEDED`, points the newer decision back to it, retains both records, and appends a TRACE event.
 
 The workspace wires supersession to the concept registry. Any settled concept sourced from the replaced decision moves out of current state and into affected/unresolved state. The owner or caller must explicitly revise, deprecate, or retain it as unresolved. The system does not guess which semantic repair is correct.
 
@@ -105,11 +105,15 @@ Implemented actions include project, round, and question registration; recommend
 
 No authoritative decision may be accepted without a matching synthesis record in the actual local TRACE. Concept sources additionally require a matching ledger-registration event. A fake ID, wrong action, wrong entity, mismatched owner value, or synthesized-but-unregistered concept source is rejected.
 
+Each TRACE record is a recursively immutable snapshot. Recording copies caller-owned container structure, so history cannot be rewritten through an accessor or a retained external alias.
+
 ## Core Concepts
 
 A core concept preserves more than a heading. Its record can carry stable identity, version, status, maturity, scope, definition, ownership boundaries, dependencies, relations, source decisions, unresolved seams, supersession, provenance, and TRACE references.
 
 Concept status and maturity use distinct vocabularies. The registry separates settled current concepts, affected/unresolved concepts, and historical versions. Revision provenance retains an original source, current-version source, and revision lineage.
+
+Concept records, including nested provenance and TRACE references, are immutable snapshots. Registry operations replace records to perform registration, affected marking, revision, deprecation, or unresolved transitions; public accessors expose those immutable values without a writable side channel.
 
 v0.1.1 registers concepts from structured decisions. It does not infer ontologies from arbitrary prose. A concept revision retains a superseded historical record.
 
@@ -138,6 +142,8 @@ The current pure renderer emits document identity, authority, settled concepts, 
 The mode is represented in project state and TRACE. Automated mode-specific round planning is deferred.
 
 ## Module Boundaries
+
+`DesignFlowWorkspace` is the canonical integrity boundary. It owns one shared TRACE and connects ledger supersession to concept invalidation. The public ledger, registry, renderer, and related classes are intentionally usable as lower-level primitives, but direct composition must reproduce the required cross-module wiring and is not equivalent to the complete workspace by default.
 
 - `model.py`: semantic records and vocabularies.
 - `intake.py`: project intake and orchestration facade.

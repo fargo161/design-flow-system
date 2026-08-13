@@ -8,7 +8,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from types import MappingProxyType
+from typing import Any, Mapping
+
+
+def freeze_semantic_value(value: Any) -> Any:
+    """Recursively snapshot supported containers into immutable equivalents."""
+
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {key: freeze_semantic_value(item) for key, item in value.items()}
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(freeze_semantic_value(item) for item in value)
+    if isinstance(value, (set, frozenset)):
+        return frozenset(freeze_semantic_value(item) for item in value)
+    return value
 
 
 class DesignFlowMode(StrEnum):
@@ -217,10 +232,10 @@ class TraceRecord:
     action: TraceAction
     entity_type: str
     entity_id: str
-    details: dict[str, Any]
+    details: Mapping[str, Any]
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class CoreConcept:
     concept_id: str
     canonical_name: str
@@ -237,8 +252,23 @@ class CoreConcept:
     source_decisions: tuple[str, ...] = ()
     unresolved: tuple[str, ...] = ()
     supersedes: tuple[str, ...] = ()
-    provenance: dict[str, Any] = field(default_factory=dict)
-    trace_refs: list[str] = field(default_factory=list)
+    provenance: Mapping[str, Any] = field(default_factory=dict)
+    trace_refs: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "owns",
+            "does_not_own",
+            "boundaries",
+            "dependencies",
+            "relations",
+            "source_decisions",
+            "unresolved",
+            "supersedes",
+            "trace_refs",
+        ):
+            object.__setattr__(self, field_name, tuple(getattr(self, field_name)))
+        object.__setattr__(self, "provenance", freeze_semantic_value(self.provenance))
 
 
 @dataclass(slots=True, frozen=True)

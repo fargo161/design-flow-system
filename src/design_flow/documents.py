@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Protocol
 
 from .concepts import CoreConceptRegistry
@@ -152,8 +153,8 @@ class LivingApplicationDocumentRenderer:
             lines.append(
                 f"- `{concept.concept_id}@{concept.version}` — {concept.definition} "
                 f"(status `{concept.status.value}`; source decision "
-                f"`{source.get('source_decision') if isinstance(source, dict) else 'UNKNOWN'}`; "
-                f"TRACE `{source.get('trace_ref') if isinstance(source, dict) else 'UNKNOWN'}`)"
+                f"`{source.get('source_decision') if isinstance(source, Mapping) else 'UNKNOWN'}`; "
+                f"TRACE `{source.get('trace_ref') if isinstance(source, Mapping) else 'UNKNOWN'}`)"
             )
         if superseded or concepts.history:
             lines.append("")
@@ -199,9 +200,9 @@ class LivingApplicationDocumentRenderer:
         ) if items else "None registered"
 
     @classmethod
-    def _concept_provenance(cls, provenance: dict[str, object]) -> str:
+    def _concept_provenance(cls, provenance: Mapping[str, object]) -> str:
         source = provenance.get("current_source", {})
-        if not isinstance(source, dict):
+        if not isinstance(source, Mapping):
             return "invalid provenance shape"
         return (
             f"decision `{source.get('source_decision')}`, "
@@ -219,7 +220,7 @@ class LivingApplicationDocumentRenderer:
         return [*(f"- {item}" for item in items), ""]
 
     @staticmethod
-    def _details(details: dict[str, object]) -> str:
+    def _details(details: Mapping[str, object]) -> str:
         if not details:
             return "No additional details."
         return "; ".join(f"{key}={value!r}" for key, value in sorted(details.items()))

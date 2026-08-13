@@ -145,7 +145,7 @@ This parser is deliberately bounded to declared option keys. It is not a general
 
 ## Supersession Model
 
-Supersession is explicit. The old decision becomes `SUPERSEDED`; the new decision records which decision it replaces; a `supersedes` relationship and TRACE entry are appended; and current decision state uses the new rule. Any settled concept sourced from the old decision is immediately moved into affected/unresolved state. It can return to current state only through an explicit revision, or leave operative state through deprecation. Old decisions and concept versions remain historical.
+Supersession is explicit and acyclic. Self-supersession, replacement by a non-current decision, duplicate edges, and graph-closing cycles are rejected before state changes. A valid chain such as A -> B -> C retains its ordered ancestry. The old decision becomes `SUPERSEDED`; the new decision records what it replaces; a `supersedes` relationship and TRACE entry are appended; and current decision state uses the new rule. Any settled concept sourced from the old decision is immediately moved into affected/unresolved state. It can return to current state only through an explicit revision, or leave operative state through deprecation. Old decisions and concept versions remain historical.
 
 ## TRACE Model
 
@@ -153,13 +153,21 @@ TRACE records project, round, question, recommendation, owner selection, synthes
 
 No authoritative decision can be accepted without matching synthesis proof in the actual local TRACE. Concept registration and revision additionally require the source decision's ledger-registration event.
 
+TRACE records are immutable snapshots. Their details are recursively frozen, and caller-owned containers are copied on ingress, so neither accessor-returned data nor later mutation of the original input can rewrite history.
+
 ## Core Concepts Document Creator
 
 Structured synthesized decisions can register concepts with identity, version, status, maturity, scope, definition, ownership, boundaries, dependencies, relations, source decisions, unresolved seams, supersession, provenance, and TRACE references. Status (`CURRENT`, `UNRESOLVED`, `DEPRECATED`, `SUPERSEDED`) is independent from maturity (`PROPOSED`, `DEFINED`, `TESTED`, `STABLE`, `DISPUTED`, `DEPRECATED`).
 
 Revision provenance retains the original source and revision history while making the replacement decision the current version's displayed source.
 
+Core-concept records and their nested provenance are immutable snapshots. All current, affected, and historical state transitions occur through registry operations such as registration, affected marking, revision, and deprecation; accessors never expose mutable semantic state.
+
 v0.1.1 does not infer concepts from arbitrary prose.
+
+## Integrity Boundary
+
+`DesignFlowWorkspace` is the canonical integration boundary for complete v0.1.1 behavior. It owns the shared TRACE and wires decision supersession to concept invalidation. The exported ledger, registry, renderer, and other lower-level classes remain composable primitives, but direct callers are responsible for equivalent cross-module wiring and therefore do not automatically receive the full workspace invariant.
 
 ## Living Application Documents
 
@@ -206,7 +214,7 @@ Documentation and code must remain symmetrical: claims about authority, ambiguit
 
 ## Current Limitations
 
-State is in memory; identifiers are caller-supplied; conflict relations are explicit rather than inferred; affected concepts require explicit owner resolution; the answer parser is bounded; binding records do not yet affect output; and maturity transitions are explicit rather than automated.
+State is in memory; identifiers are caller-supplied; conflict relations are explicit rather than inferred; direct low-level composition requires manual integrity wiring; affected concepts require explicit owner resolution; the answer parser is bounded; binding records do not yet affect output; and maturity transitions are explicit rather than automated.
 
 ## Next Legitimate Steps
 

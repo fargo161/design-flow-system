@@ -109,7 +109,11 @@ class DecisionSynthesizer:
 
 
 class DecisionLedger:
-    """Append-preserving history and explicit decision relationships."""
+    """Append-preserving decision primitive with explicit relationships.
+
+    DesignFlowWorkspace supplies the listener wiring that propagates
+    supersession into the separate concept registry.
+    """
 
     def __init__(self, trace: TraceLog) -> None:
         self.trace = trace
@@ -173,10 +177,38 @@ class DecisionLedger:
     def supersede(self, earlier_decision: str, later_decision: str, *, notes: str) -> None:
         earlier = self.get(earlier_decision)
         later = self.get(later_decision)
+        if earlier_decision == later_decision:
+            raise ValueError("A decision cannot supersede itself")
         if earlier.status is DecisionStatus.SUPERSEDED:
             raise ValueError(f"Decision is already superseded: {earlier_decision}")
+        eligible = {
+            DecisionStatus.SYNTHESIZED,
+            DecisionStatus.TESTED,
+            DecisionStatus.RATIFIED,
+            DecisionStatus.UNRESOLVED,
+        }
+        if later.status not in eligible:
+            raise ValueError(
+                f"Replacement decision is not current/eligible: {later_decision}"
+            )
+        self.trace.validate_registered_decision(later)
+        if any(
+            relation.relation is ConflictRelation.SUPERSEDES
+            and relation.earlier_decision == earlier_decision
+            and relation.later_decision == later_decision
+            for relation in self._relationships
+        ):
+            raise ValueError(
+                f"Supersession relationship already exists: {earlier_decision} -> {later_decision}"
+            )
+        if later_decision in self._supersession_ancestors(earlier_decision):
+            raise ValueError(
+                f"Supersession would create a cycle: {earlier_decision} -> {later_decision}"
+            )
         earlier.status = DecisionStatus.SUPERSEDED
-        later.supersedes = tuple(dict.fromkeys((*later.supersedes, earlier_decision)))
+        later.supersedes = tuple(
+            dict.fromkeys((*later.supersedes, *earlier.supersedes, earlier_decision))
+        )
         self.record_relationship(
             earlier_decision,
             later_decision,
@@ -194,6 +226,23 @@ class DecisionLedger:
         later.trace_refs.append(trace_id)
         for listener in self._supersession_listeners:
             listener(earlier, later)
+
+    def _supersession_ancestors(self, decision_id: str) -> set[str]:
+        """Return transitive historical predecessors for cycle detection."""
+
+        ancestors: set[str] = set()
+        pending = [decision_id]
+        while pending:
+            current = pending.pop()
+            for relation in self._relationships:
+                if (
+                    relation.relation is ConflictRelation.SUPERSEDES
+                    and relation.later_decision == current
+                    and relation.earlier_decision not in ancestors
+                ):
+                    ancestors.add(relation.earlier_decision)
+                    pending.append(relation.earlier_decision)
+        return ancestors
 
 
 class CurrentStateCompiler:

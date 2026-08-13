@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 from dataclasses import replace
 
 from .model import (
@@ -17,7 +16,11 @@ from .trace import TraceLog
 
 
 class CoreConceptRegistry:
-    """Separate settled current, affected/unresolved, and historical concepts."""
+    """Mutation-controlled current, affected, and historical concept state.
+
+    Direct use does not subscribe the registry to a DecisionLedger; the
+    canonical DesignFlowWorkspace establishes that cross-module invariant.
+    """
 
     def __init__(self, trace: TraceLog) -> None:
         self.trace = trace
@@ -27,16 +30,20 @@ class CoreConceptRegistry:
 
     @property
     def concepts(self) -> tuple[CoreConcept, ...]:
-        """Settled current concepts only; affected concepts never masquerade here."""
+        """Return immutable settled-current concept records."""
 
         return tuple(self._current.values())
 
     @property
     def affected(self) -> tuple[CoreConcept, ...]:
+        """Return immutable concepts awaiting explicit semantic resolution."""
+
         return tuple(self._affected.values())
 
     @property
     def history(self) -> tuple[CoreConcept, ...]:
+        """Return immutable historical concept versions."""
+
         return tuple(self._history)
 
     def get(self, concept_id: str) -> CoreConcept:
@@ -70,6 +77,13 @@ class CoreConceptRegistry:
             if decision.status is DecisionStatus.UNRESOLVED or unresolved
             else ConceptStatus.CURRENT
         )
+        trace_id = self.trace.record(
+            TraceAction.REGISTER_CONCEPT,
+            "concept",
+            concept_id,
+            source_decisions=[decision.decision_id],
+            canonical_name=canonical_name,
+        )
         concept = CoreConcept(
             concept_id=concept_id,
             canonical_name=canonical_name,
@@ -86,22 +100,14 @@ class CoreConceptRegistry:
             source_decisions=(decision.decision_id,),
             unresolved=tuple(dict.fromkeys((*unresolved, *decision.unresolved_consequences))),
             provenance=self._initial_provenance(decision),
-        )
-        concept.trace_refs.append(
-            self.trace.record(
-                TraceAction.REGISTER_CONCEPT,
-                "concept",
-                concept_id,
-                source_decisions=list(concept.source_decisions),
-                canonical_name=canonical_name,
-            )
+            trace_refs=(trace_id,),
         )
         target = self._affected if status is ConceptStatus.UNRESOLVED else self._current
         target[concept_id] = concept
         return concept
 
     def mark_affected_by_supersession(self, earlier: Decision, later: Decision) -> tuple[str, ...]:
-        """Conservatively quarantine concepts whose source decision was replaced."""
+        """Replace dependent current records with immutable unresolved records."""
 
         affected_ids: list[str] = []
         for concept_id, concept in tuple(self._current.items()):
@@ -111,40 +117,43 @@ class CoreConceptRegistry:
                 f"Concept {concept_id} requires explicit resolution because source decision "
                 f"{earlier.decision_id} was superseded by {later.decision_id}."
             )
-            concept.status = ConceptStatus.UNRESOLVED
-            concept.unresolved = tuple(dict.fromkeys((*concept.unresolved, reason)))
-            concept.trace_refs.append(
-                self.trace.record(
-                    TraceAction.MARK_CONCEPT_AFFECTED,
-                    "concept",
-                    concept_id,
-                    superseded_decision=earlier.decision_id,
-                    replacement_decision=later.decision_id,
-                    resolution_required=True,
-                )
+            trace_id = self.trace.record(
+                TraceAction.MARK_CONCEPT_AFFECTED,
+                "concept",
+                concept_id,
+                superseded_decision=earlier.decision_id,
+                replacement_decision=later.decision_id,
+                resolution_required=True,
+            )
+            affected = replace(
+                concept,
+                status=ConceptStatus.UNRESOLVED,
+                unresolved=tuple(dict.fromkeys((*concept.unresolved, reason))),
+                trace_refs=(*concept.trace_refs, trace_id),
             )
             del self._current[concept_id]
-            self._affected[concept_id] = concept
+            self._affected[concept_id] = affected
             affected_ids.append(concept_id)
         return tuple(affected_ids)
 
     def mark_unresolved(self, concept_id: str, *, reason: str) -> CoreConcept:
         concept = self.get(concept_id)
-        if concept_id in self._current:
-            del self._current[concept_id]
-            self._affected[concept_id] = concept
-        concept.status = ConceptStatus.UNRESOLVED
-        concept.unresolved = tuple(dict.fromkeys((*concept.unresolved, reason)))
-        concept.trace_refs.append(
-            self.trace.record(
-                TraceAction.MARK_CONCEPT_AFFECTED,
-                "concept",
-                concept_id,
-                reason=reason,
-                resolution_required=True,
-            )
+        trace_id = self.trace.record(
+            TraceAction.MARK_CONCEPT_AFFECTED,
+            "concept",
+            concept_id,
+            reason=reason,
+            resolution_required=True,
         )
-        return concept
+        affected = replace(
+            concept,
+            status=ConceptStatus.UNRESOLVED,
+            unresolved=tuple(dict.fromkeys((*concept.unresolved, reason))),
+            trace_refs=(*concept.trace_refs, trace_id),
+        )
+        self._current.pop(concept_id, None)
+        self._affected[concept_id] = affected
+        return affected
 
     def revise(
         self,
@@ -156,29 +165,35 @@ class CoreConceptRegistry:
         maturity: ConceptMaturity = ConceptMaturity.DEFINED,
         unresolved: tuple[str, ...] = (),
     ) -> CoreConcept:
-        """Resolve a concept with a new version and explicit provenance lineage."""
+        """Replace a concept with a new immutable version and preserve history."""
 
         self._validate_source_decision(source_decision)
         prior = self.get(concept_id)
-        historical = replace(
-            prior,
-            status=ConceptStatus.SUPERSEDED,
-            provenance=deepcopy(prior.provenance),
-            trace_refs=list(prior.trace_refs),
-        )
-        self._history.append(historical)
+        self._history.append(replace(prior, status=ConceptStatus.SUPERSEDED))
 
         source = self._source_provenance(source_decision)
-        provenance = deepcopy(prior.provenance)
-        provenance["current_source"] = source
-        provenance.setdefault("revisions", []).append(
-            {
-                "prior_version": prior.version,
-                "version": version,
-                **source,
-            }
-        )
+        provenance = {
+            "original_source": prior.provenance["original_source"],
+            "current_source": source,
+            "revisions": (
+                *prior.provenance.get("revisions", ()),
+                {
+                    "prior_version": prior.version,
+                    "version": version,
+                    **source,
+                },
+            ),
+        }
         status = ConceptStatus.UNRESOLVED if unresolved else ConceptStatus.CURRENT
+        trace_id = self.trace.record(
+            TraceAction.REVISE_CONCEPT,
+            "concept",
+            concept_id,
+            prior_version=prior.version,
+            version=version,
+            source_decision=source_decision.decision_id,
+            source_trace=source["trace_ref"],
+        )
         revised = replace(
             prior,
             version=version,
@@ -193,18 +208,7 @@ class CoreConceptRegistry:
                 dict.fromkeys((*prior.supersedes, f"{concept_id}@{prior.version}"))
             ),
             provenance=provenance,
-            trace_refs=list(prior.trace_refs),
-        )
-        revised.trace_refs.append(
-            self.trace.record(
-                TraceAction.REVISE_CONCEPT,
-                "concept",
-                concept_id,
-                prior_version=prior.version,
-                version=version,
-                source_decision=source_decision.decision_id,
-                source_trace=source["trace_ref"],
-            )
+            trace_refs=(*prior.trace_refs, trace_id),
         )
         self._current.pop(concept_id, None)
         self._affected.pop(concept_id, None)
@@ -213,25 +217,22 @@ class CoreConceptRegistry:
         return revised
 
     def deprecate(self, concept_id: str, *, reason: str) -> CoreConcept:
-        """Resolve an affected concept by moving it into historical state."""
+        """Move a concept into immutable historical state."""
 
         concept = self.get(concept_id)
+        trace_id = self.trace.record(
+            TraceAction.DEPRECATE_CONCEPT,
+            "concept",
+            concept_id,
+            version=concept.version,
+            reason=reason,
+        )
         historical = replace(
             concept,
             status=ConceptStatus.DEPRECATED,
             maturity=ConceptMaturity.DEPRECATED,
             unresolved=tuple(dict.fromkeys((*concept.unresolved, reason))),
-            provenance=deepcopy(concept.provenance),
-            trace_refs=list(concept.trace_refs),
-        )
-        historical.trace_refs.append(
-            self.trace.record(
-                TraceAction.DEPRECATE_CONCEPT,
-                "concept",
-                concept_id,
-                version=concept.version,
-                reason=reason,
-            )
+            trace_refs=(*concept.trace_refs, trace_id),
         )
         self._current.pop(concept_id, None)
         self._affected.pop(concept_id, None)
@@ -251,9 +252,9 @@ class CoreConceptRegistry:
     def _initial_provenance(self, decision: Decision) -> dict[str, object]:
         source = self._source_provenance(decision)
         return {
-            "original_source": deepcopy(source),
-            "current_source": deepcopy(source),
-            "revisions": [],
+            "original_source": source,
+            "current_source": source,
+            "revisions": (),
         }
 
     def _source_provenance(self, decision: Decision) -> dict[str, object]:
@@ -262,7 +263,7 @@ class CoreConceptRegistry:
             "source_decision": decision.decision_id,
             "source_round": decision.source_round,
             "source_question": decision.source_question,
-            "owner_answer": list(decision.authoritative_value),
-            "recommendation_was": list(decision.provenance.recommendation_was),
+            "owner_answer": tuple(decision.authoritative_value),
+            "recommendation_was": tuple(decision.provenance.recommendation_was),
             "trace_ref": record.trace_id,
         }
