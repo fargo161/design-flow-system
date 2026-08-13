@@ -1,0 +1,235 @@
+"""Core semantic records for the Design Flow System.
+
+The records in this module deliberately keep recommendations, owner answers,
+derived decisions, concepts, and rendered documents as distinct layers.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import StrEnum
+from typing import Any
+
+
+class DesignFlowMode(StrEnum):
+    """The intent that guides future round selection."""
+
+    DISCOVERY = "DISCOVERY"
+    REFINEMENT = "REFINEMENT"
+    REPAIR = "REPAIR"
+
+
+class QuestionType(StrEnum):
+    MULTIPLE_CHOICE = "MULTIPLE_CHOICE"
+    YES_NO = "YES_NO"
+
+
+class DecisionStatus(StrEnum):
+    OPEN = "OPEN"
+    PROPOSED = "PROPOSED"
+    OWNER_SELECTED = "OWNER_SELECTED"
+    SYNTHESIZED = "SYNTHESIZED"
+    TESTED = "TESTED"
+    RATIFIED = "RATIFIED"
+    UNRESOLVED = "UNRESOLVED"
+    SUPERSEDED = "SUPERSEDED"
+
+
+class ConflictRelation(StrEnum):
+    COMPATIBLE = "compatible"
+    POTENTIAL_CONFLICT = "potential_conflict"
+    SUPERSEDES = "supersedes"
+    UNRESOLVED_CONFLICT = "unresolved_conflict"
+
+
+class TraceAction(StrEnum):
+    REGISTER_PROJECT = "REGISTER_PROJECT"
+    REGISTER_ROUND = "REGISTER_ROUND"
+    REGISTER_QUESTION = "REGISTER_QUESTION"
+    RECOMMEND = "RECOMMEND"
+    OWNER_SELECT = "OWNER_SELECT"
+    SYNTHESIZE = "SYNTHESIZE"
+    REGISTER_DECISION = "REGISTER_DECISION"
+    MARK_UNRESOLVED = "MARK_UNRESOLVED"
+    SUPERSEDE = "SUPERSEDE"
+    REGISTER_CONCEPT = "REGISTER_CONCEPT"
+    REVISE_CONCEPT = "REVISE_CONCEPT"
+    GENERATE_DOCUMENT = "GENERATE_DOCUMENT"
+
+
+@dataclass(slots=True, frozen=True)
+class QuestionOption:
+    key: str
+    label: str
+
+    def __post_init__(self) -> None:
+        if not self.key.strip():
+            raise ValueError("Question option keys cannot be empty")
+        if not self.label.strip():
+            raise ValueError("Question option labels cannot be empty")
+
+
+@dataclass(slots=True, frozen=True)
+class Recommendation:
+    """Advisory input; never a substitute for an owner answer."""
+
+    proposed_answer: tuple[str, ...]
+    reason: str
+    status: DecisionStatus = DecisionStatus.PROPOSED
+
+
+@dataclass(slots=True, frozen=True)
+class OwnerAnswer:
+    raw_value: str
+    normalized_value: tuple[str, ...]
+    qualifiers: tuple[str, ...]
+    status: DecisionStatus
+    source_round: str
+    source_question: str
+
+    @property
+    def qualifier(self) -> str | None:
+        return "; ".join(self.qualifiers) if self.qualifiers else None
+
+
+@dataclass(slots=True)
+class Question:
+    question_id: str
+    text: str
+    question_type: QuestionType
+    options: tuple[QuestionOption, ...]
+    recommendation: Recommendation
+    owner_answer: OwnerAnswer | None = None
+    answer_status: DecisionStatus = DecisionStatus.PROPOSED
+    derived_implications: list[str] = field(default_factory=list)
+    trace_refs: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        keys = [option.key.upper() for option in self.options]
+        if not self.question_id.strip() or not self.text.strip():
+            raise ValueError("Questions require an id and text")
+        if len(keys) < 2 or len(set(keys)) != len(keys):
+            raise ValueError("Questions require at least two uniquely keyed options")
+        proposed = {value.upper() for value in self.recommendation.proposed_answer}
+        if proposed and not proposed.issubset(set(keys)):
+            raise ValueError("Recommendation must refer to a declared option")
+
+    @property
+    def option_keys(self) -> tuple[str, ...]:
+        return tuple(option.key.upper() for option in self.options)
+
+
+@dataclass(slots=True)
+class DesignRound:
+    round_id: str
+    topic: str
+    purpose: str
+    prerequisites: tuple[str, ...] = ()
+    questions: list[Question] = field(default_factory=list)
+    owner_answer_set: dict[str, OwnerAnswer] = field(default_factory=dict)
+    synthesis: list[str] = field(default_factory=list)
+    derived_rules: list[str] = field(default_factory=list)
+    unresolved: list[str] = field(default_factory=list)
+    conflicts_detected: list[str] = field(default_factory=list)
+    status: DecisionStatus = DecisionStatus.OPEN
+    trace_refs: list[str] = field(default_factory=list)
+
+    def question(self, question_id: str) -> Question:
+        for item in self.questions:
+            if item.question_id == question_id:
+                return item
+        raise KeyError(f"Unknown question: {question_id}")
+
+
+@dataclass(slots=True)
+class Project:
+    project_id: str
+    name: str
+    description: str
+    current_mode: DesignFlowMode
+    authority: str
+    current_state_version: str = "0.1.0"
+    source_context: tuple[str, ...] = ()
+    unresolved_areas: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True, frozen=True)
+class DecisionProvenance:
+    recommendation_was: tuple[str, ...]
+    recommendation_reason: str
+    owner_raw_value: str
+    owner_normalized_value: tuple[str, ...]
+    owner_qualifiers: tuple[str, ...]
+    question_text: str = ""
+    options: tuple[QuestionOption, ...] = ()
+
+
+@dataclass(slots=True)
+class Decision:
+    decision_id: str
+    canonical_rule: str
+    authoritative_value: tuple[str, ...]
+    status: DecisionStatus
+    scope: str
+    source_round: str
+    source_question: str
+    provenance: DecisionProvenance
+    dependencies: tuple[str, ...] = ()
+    supersedes: tuple[str, ...] = ()
+    unresolved_consequences: tuple[str, ...] = ()
+    trace_refs: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True, frozen=True)
+class ConflictRecord:
+    earlier_decision: str
+    later_decision: str
+    relation: ConflictRelation
+    notes: str
+
+
+@dataclass(slots=True, frozen=True)
+class TraceRecord:
+    trace_id: str
+    action: TraceAction
+    entity_type: str
+    entity_id: str
+    details: dict[str, Any]
+
+
+@dataclass(slots=True)
+class CoreConcept:
+    concept_id: str
+    canonical_name: str
+    version: str
+    status: DecisionStatus
+    maturity: DecisionStatus
+    scope: str
+    definition: str
+    owns: tuple[str, ...] = ()
+    does_not_own: tuple[str, ...] = ()
+    boundaries: tuple[str, ...] = ()
+    dependencies: tuple[str, ...] = ()
+    relations: tuple[str, ...] = ()
+    source_decisions: tuple[str, ...] = ()
+    unresolved: tuple[str, ...] = ()
+    supersedes: tuple[str, ...] = ()
+    provenance: dict[str, Any] = field(default_factory=dict)
+    trace_refs: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True, frozen=True)
+class CurrentDesignState:
+    project_id: str
+    version: str
+    decisions: tuple[Decision, ...]
+    unresolved: tuple[str, ...]
+
+
+@dataclass(slots=True, frozen=True)
+class ApplicationBinding:
+    """A small seam between stable concept identity and document layout."""
+
+    schema_id: str
+    concept_id: str
+    section_key: str
