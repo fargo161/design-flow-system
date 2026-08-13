@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import replace
 
 from .model import (
+    Decision,
     DecisionStatus,
     DesignRound,
     OwnerAnswer,
@@ -70,9 +72,15 @@ def parse_owner_answer(
 
 
 class RoundManager:
-    def __init__(self, project: Project, trace: TraceLog) -> None:
+    def __init__(
+        self,
+        project: Project,
+        trace: TraceLog,
+        registered_decisions: Callable[[], tuple[Decision, ...]],
+    ) -> None:
         self.project = project
         self.trace = trace
+        self._registered_decisions = registered_decisions
         self._rounds: dict[str, DesignRound] = {}
 
     @property
@@ -94,6 +102,8 @@ class RoundManager:
             "round",
             design_round.round_id,
             topic=design_round.topic,
+            purpose=design_round.purpose,
+            prerequisites=list(design_round.prerequisites),
             mode=self.project.current_mode.value,
         )
         registered = replace(
@@ -119,6 +129,8 @@ class RoundManager:
                 question.question_id,
                 round_id=round_id,
                 question_type=question.question_type.value,
+                question_text=question.text,
+                options=[(option.key, option.label) for option in question.options],
             ),
             self.trace.record(
                 TraceAction.RECOMMEND,
@@ -126,6 +138,7 @@ class RoundManager:
                 question.question_id,
                 proposed_answer=list(question.recommendation.proposed_answer),
                 reason=question.recommendation.reason,
+                status=question.recommendation.status.value,
             ),
         )
         registered = replace(question, trace_refs=trace_refs)
@@ -204,14 +217,22 @@ class RoundManager:
         self._rounds[round_id] = updated_round
         return answer
 
-    def record_synthesis(self, round_id: str, canonical_rule: str) -> DesignRound:
-        """Replace a committed round snapshot after authorized synthesis."""
+    def _synchronize_decision_history(self, round_id: str) -> DesignRound:
+        """Derive committed synthesis solely from registered ledger decisions."""
 
         design_round = self.get(round_id)
+        sourced = tuple(
+            decision
+            for decision in self._registered_decisions()
+            if decision.source_round == round_id
+        )
+        for decision in sourced:
+            self.trace.validate_registered_decision(decision)
+        canonical_rules = tuple(decision.canonical_rule for decision in sourced)
         updated = replace(
             design_round,
-            synthesis=(*design_round.synthesis, canonical_rule),
-            derived_rules=(*design_round.derived_rules, canonical_rule),
+            synthesis=canonical_rules,
+            derived_rules=canonical_rules,
         )
         self._rounds[round_id] = updated
         return updated

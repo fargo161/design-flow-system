@@ -61,7 +61,7 @@ Activation is all or nothing:
 7. Require envelope project ID, semantic role, format, and generation agreement.
 8. Reject unknown fields and reconstruct domain records.
 9. Validate chronological, unique TRACE IDs and continuation.
-10. Validate project/round/question/answer/decision provenance.
+10. Validate project/round/question/answer/decision provenance, including question identity without a decision and round purpose/prerequisites.
 11. Derive the supersession graph; validate unique edges, replacement status, exact transitive ancestry, bound TRACE, and acyclicity in both directions.
 12. Validate concept partitions, decision sources, provenance, and current-source eligibility.
 13. Recompile and compare the unresolved register.
@@ -70,6 +70,10 @@ Activation is all or nothing:
 16. Activate the project; regenerate a stale cache afterward if necessary.
 
 Any failure raises `ProjectValidationError`. State before that point is provisional material, not an active project.
+
+For every committed round, activation derives one canonical synthesis sequence from registered decisions whose `source_round` matches that round, preserving ledger registration order. Both `synthesis` and `derived_rules` must equal that sequence exactly. Extra, missing, reordered, duplicated, or rewritten rules are rejected.
+
+`REGISTER_QUESTION` binds question text, type, options, and source round; `RECOMMEND` binds proposed answers, reason, and status. This protects question history even when no decision was synthesized. Round purpose and prerequisites are authoritative fields bound by `REGISTER_ROUND`. `conflicts_detected` is a reserved non-authoritative projection, is required to be empty, and cannot replace the authoritative decision relationship ledger.
 
 ## Draft Commit Failure
 

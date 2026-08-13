@@ -67,6 +67,10 @@ new owner answer → new decision → guarded SUPERSEDES edge
 
 Committed records are immutable snapshots. The in-memory manager performs authorized changes by replacing whole round/question snapshots rather than exposing live mutable history. Drafts remain editable through immutable-replacement draft APIs.
 
+Committed round synthesis is decision-derived: both `synthesis` and `derived_rules` exactly equal the canonical rules of registered decisions sourced to that round, in ledger registration order. The round manager exposes no raw-string synthesis writer. Question registration TRACE binds text, type, and declared options, while recommendation TRACE binds the complete recommendation, including when no decision follows.
+
+Round `purpose` and `prerequisites` are authoritative registration metadata bound to `REGISTER_ROUND`. `conflicts_detected` is reserved non-authoritative projection metadata, must be empty in v0.2, and never substitutes for conflict relationships in the decision ledger.
+
 Supersession rejects self-links, ineligible replacements, duplicates, multiple direct replacements, and cycles. Activation derives ancestry from the relationship graph and requires exact agreement among decision status, direct edges, transitive `supersedes` lineage, and one bound TRACE event per edge. A new decision preserves transitive predecessor identity.
 
 ## Concepts

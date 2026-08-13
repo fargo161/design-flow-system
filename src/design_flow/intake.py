@@ -36,9 +36,9 @@ class DesignFlowWorkspace:
     def __init__(self, project: Project) -> None:
         self.project = project
         self.trace = TraceLog()
-        self.rounds = RoundManager(project, self.trace)
-        self.synthesizer = DecisionSynthesizer(self.trace)
         self.ledger = DecisionLedger(self.trace)
+        self.rounds = RoundManager(project, self.trace, lambda: self.ledger.decisions)
+        self.synthesizer = DecisionSynthesizer(self.trace)
         self.concepts = CoreConceptRegistry(self.trace, self.ledger.get)
         self.ledger.add_supersession_listener(self.concepts.mark_affected_by_supersession)
         self.state_compiler = CurrentStateCompiler()
@@ -95,11 +95,13 @@ class DesignFlowWorkspace:
         workspace.project = project
         workspace.trace = TraceLog()
         workspace.trace.restore(trace_records)
-        workspace.rounds = RoundManager(project, workspace.trace)
-        workspace.rounds.restore(rounds)
-        workspace.synthesizer = DecisionSynthesizer(workspace.trace)
         workspace.ledger = DecisionLedger(workspace.trace)
         workspace.ledger.restore(decisions, relationships)
+        workspace.rounds = RoundManager(
+            project, workspace.trace, lambda: workspace.ledger.decisions
+        )
+        workspace.rounds.restore(rounds)
+        workspace.synthesizer = DecisionSynthesizer(workspace.trace)
         workspace.concepts = CoreConceptRegistry(workspace.trace, workspace.ledger.get)
         workspace.concepts.restore(current_concepts, affected_concepts, concept_history)
         workspace.ledger.add_supersession_listener(
@@ -139,7 +141,7 @@ class DesignFlowWorkspace:
             unresolved_consequences=unresolved_consequences,
         )
         registered = self.ledger.register(decision)
-        self.rounds.record_synthesis(round_id, registered.canonical_rule)
+        self.rounds._synchronize_decision_history(round_id)
         return registered
 
     def register_concept_from_decision(self, decision: Decision, **fields: Any) -> CoreConcept:

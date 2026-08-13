@@ -1012,6 +1012,8 @@ class ProjectStore:
                 item.entity_type == "round"
                 and item.entity_id == design_round.round_id
                 and item.details.get("topic") == design_round.topic
+                and item.details.get("purpose") == design_round.purpose
+                and item.details.get("prerequisites") == design_round.prerequisites
                 and item.details.get("mode") == workspace.project.current_mode.value
                 for item in round_events
             ):
@@ -1037,6 +1039,9 @@ class ProjectStore:
                     and item.entity_id == question.question_id
                     and item.details.get("round_id") == design_round.round_id
                     and item.details.get("question_type") == question.question_type.value
+                    and item.details.get("question_text") == question.text
+                    and item.details.get("options")
+                    == tuple((option.key, option.label) for option in question.options)
                     for item in question_events
                 ):
                     raise ProjectValidationError(
@@ -1048,6 +1053,7 @@ class ProjectStore:
                     and item.details.get("proposed_answer")
                     == tuple(question.recommendation.proposed_answer)
                     and item.details.get("reason") == question.recommendation.reason
+                    and item.details.get("status") == question.recommendation.status.value
                     for item in question_events
                 ):
                     raise ProjectValidationError(
@@ -1084,8 +1090,15 @@ class ProjectStore:
                 raise ProjectValidationError(
                     f"Round {design_round.round_id} has answers for unknown questions"
                 )
+            if design_round.conflicts_detected:
+                raise ProjectValidationError(
+                    f"Round {design_round.round_id} has non-authoritative conflict projection data"
+                )
 
         decisions = {item.decision_id: item for item in workspace.ledger.decisions}
+        synthesis_by_round: dict[str, list[str]] = {
+            round_id: [] for round_id in round_ids
+        }
         for decision in workspace.ledger.decisions:
             question = question_index.get((decision.source_round, decision.source_question))
             if question is None or question.owner_answer is None:
@@ -1115,6 +1128,18 @@ class ProjectStore:
                 workspace.trace.validate_registered_decision(decision)
             except ValueError as error:
                 raise ProjectValidationError(str(error)) from error
+            synthesis_by_round[decision.source_round].append(decision.canonical_rule)
+
+        for design_round in workspace.rounds.rounds:
+            expected_synthesis = tuple(synthesis_by_round[design_round.round_id])
+            if design_round.synthesis != expected_synthesis:
+                raise ProjectValidationError(
+                    f"Round {design_round.round_id} synthesis disagrees with registered decisions"
+                )
+            if design_round.derived_rules != expected_synthesis:
+                raise ProjectValidationError(
+                    f"Round {design_round.round_id} derived rules disagree with registered decisions"
+                )
 
         supersession_edges: dict[str, list[str]] = {}
         direct_supersessions: list[tuple[str, str]] = []

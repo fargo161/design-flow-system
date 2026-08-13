@@ -34,6 +34,8 @@ The semantic guarantees stabilized in v0.1.1 remain intact:
 - supersession is explicit, guarded, acyclic, and history-preserving;
 - persisted supersession is activated only when status, direct relationships, exact transitive ancestry, and TRACE form one coherent graph;
 - committed project, round, question, recommendation, and owner-answer records are immutable snapshots;
+- committed round synthesis and `derived_rules` must exactly equal registered decision rules sourced to that round in ledger order;
+- question text, type, options, and recommendation remain TRACE-bound even when no decision is synthesized;
 - concepts sourced from superseded decisions leave settled current state until explicitly resolved;
 - authoritative decisions and concepts require matching local TRACE provenance;
 - `DesignFlowWorkspace` remains the canonical cross-module integrity boundary.
@@ -95,6 +97,8 @@ Load is a staged semantic activation gate. It verifies:
 6. TRACE IDs and provenance;
 7. round, answer, decision, supersession, unresolved, concept, and cross-reference integrity;
 8. current-state compilation.
+
+Round `purpose` and `prerequisites` are authoritative registration history and are checked against `REGISTER_ROUND` TRACE. `conflicts_detected` is a reserved non-authoritative projection with no v0.2 producer and must remain empty; conflict authority lives in the decision relationship ledger.
 
 Corruption, missing files, hash changes, unknown fields, mixed generations, unsupported formats, forged TRACE, and invalid references block activation. Generated Markdown is never used to repair authority.
 
