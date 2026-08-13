@@ -104,8 +104,6 @@ class DecisionSynthesizer:
             status=status.value,
         )
         decision = replace(decision, trace_refs=(trace_id,))
-        design_round.synthesis.append(canonical_rule)
-        design_round.derived_rules.append(canonical_rule)
         return decision
 
 

@@ -32,6 +32,8 @@ The semantic guarantees stabilized in v0.1.1 remain intact:
 - synthesis uses the normalized owner value through an explicit rule mapping;
 - qualified answers remain unresolved instead of being guessed away;
 - supersession is explicit, guarded, acyclic, and history-preserving;
+- persisted supersession is activated only when status, direct relationships, exact transitive ancestry, and TRACE form one coherent graph;
+- committed project, round, question, recommendation, and owner-answer records are immutable snapshots;
 - concepts sourced from superseded decisions leave settled current state until explicitly resolved;
 - authoritative decisions and concepts require matching local TRACE provenance;
 - `DesignFlowWorkspace` remains the canonical cross-module integrity boundary.
@@ -45,7 +47,7 @@ SAVE GENERATION != SEMANTIC REVISION
 GENERATED MARKDOWN != SOURCE OF TRUTH
 ```
 
-A draft may be answered, edited, previewed, saved, resumed, or abandoned without creating semantic history. A complete round becomes authoritative only through explicit `LOCK`. Lock runs on an isolated candidate workspace; synthesis, supersession, concept work, validation, and durable promotion must all succeed before the active project changes.
+A draft may be imported from the strict JSON draft schema, answered, edited, previewed, saved, resumed, or abandoned without creating semantic history. A complete round becomes authoritative only through explicit `LOCK`. Lock runs on an isolated candidate workspace; synthesis, supersession, concept work, validation, and durable promotion must all succeed before the active project changes.
 
 Historical correction creates a new decision and an explicit supersession edge. It never rewrites a committed owner answer.
 
@@ -77,7 +79,9 @@ See [docs/PERSISTENCE.md](docs/PERSISTENCE.md) for the precise activation, hashi
 
 ## Save and Load Integrity
 
-Every successful checkpoint increments `save_generation` without adding TRACE or fabricating semantic history. Save constructs and validates a complete sibling candidate directory, then promotes it. Existing state is first renamed to a unique sibling backup and restored if candidate promotion fails. The backup is removed only after promotion succeeds.
+Every successful checkpoint increments `save_generation` without adding TRACE or fabricating semantic history. Save constructs and validates a complete sibling candidate directory, then promotes it. Existing state is first renamed to a unique sibling backup and restored if candidate promotion fails.
+
+The storage commit point is the successful `candidate -> target` rename. Failure before that point leaves or restores prior authority. Backup deletion occurs after the commit point; cleanup failure returns a truthful recovery warning while the new canonical target remains committed. The leftover backup blocks future ordinary activation until owner review.
 
 This is a best portable directory-swap approximation, not a claim of one indivisible multi-directory filesystem transaction. A process or machine interruption can leave a candidate or backup sibling. Load detects those recovery artifacts and refuses activation pending owner review; it never guesses which directory to trust.
 
@@ -96,13 +100,15 @@ Corruption, missing files, hash changes, unknown fields, mixed generations, unsu
 
 ## Sessions, Sources, and Artifacts
 
-A project is durable authority. A session is only a bounded operating episode over that project. Session metadata records its ID, project ID, timestamps, rounds touched/committed, save generations, and generated artifacts. Raw chat is not continuity authority.
+A project is durable authority. A session is only a bounded operating episode over that project. Session metadata records its ID, project ID, timestamps, rounds touched/committed, save generations, and generated artifacts. Activation validates round references, the touched/committed relationship, generation bounds, and the single-open-session model; resume reuses that open session. Raw chat is not continuity authority.
 
 Sources are evidence. External sources may be unavailable without invalidating already-authoritative state. Local source paths must be project-relative under `sources/`.
 
 The current-state cache is regenerated if missing, malformed, or stale. Generated artifacts carry source generation plus compiler identity/version. Stale artifacts do not invalidate a project and are regenerated on explicit `COMPILE`.
 
 ## Context Handoff and Optional LLMs
+
+One canonical unresolved-register compiler combines project/current-state seams, round-level qualified seams, and current or affected concept seams. Persistence, the runner, session brief, context handoff, recommender, and living document consume that same ordered, deduplicated result.
 
 The context-handoff compiler derives continuity from committed structured state: project identity, mode, current rules, relevant decision provenance, unresolved work, concepts, supersession history, recent TRACE, one next-round recommendation, and session continuity.
 
@@ -114,6 +120,7 @@ The LLM seam is optional and proposal-only. An adapter may propose a `DraftRound
 
 ```text
 STATE  LEDGER  UNRESOLVED  CONCEPTS  TRACE  ROUND
+IMPORT DRAFT <path>
 ANSWER  EDIT  PREVIEW  LOCK  ABANDON
 SAVE  COMPILE  HELP  END SESSION
 ```
@@ -138,6 +145,7 @@ Project selection is explicit through `PersistentProject.create(...)` or `Persis
 | `llm.py` | Optional proposal-only adapter protocol |
 | `runner.py` | Guided command interface |
 | `documents.py` | Pure living-application Markdown renderer |
+| `unresolved.py` | Canonical complete unresolved-register compiler |
 
 ## Install and Validate
 
@@ -148,7 +156,7 @@ python -m venv .venv
 .venv\Scripts\python -m design_flow.demo
 ```
 
-The test suite includes the original semantic regressions plus save/reload, ID stability, TRACE continuation, strict schema/version/hash/generation failures, cross-reference and provenance attacks, stale derivation behavior, draft isolation, failed-lock rollback, session lineage, explicit supersession correction, optional-LLM absence, and a three-round persisted lifecycle.
+The test suite includes the original semantic regressions plus save/reload, ID stability, TRACE continuation, strict schema/version/hash/generation failures, symmetric supersession and orphan-TRACE attacks, committed-history mutation attempts, canonical unresolved surfaces, command-level draft import, promotion-boundary failure injection, session consistency, draft isolation, optional-LLM absence, and a three-round persisted lifecycle.
 
 GitHub Actions preserves the existing install, full unittest, deterministic demo, and package-build gates on `main`, `codex/**`, and pull requests to `main`.
 

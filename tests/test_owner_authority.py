@@ -33,6 +33,7 @@ class OwnerAuthorityTests(unittest.TestCase):
         )
 
         workspace.record_owner_answer("round-1", "question-1", "B")
+        question = workspace.rounds.get("round-1").question("question-1")
         decision = workspace.synthesize_decision(
             "round-1",
             "question-1",

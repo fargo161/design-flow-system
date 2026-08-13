@@ -151,8 +151,8 @@ def decode_project(project_id: str, value: Any) -> Project:
             data["current_state_version"], "manifest.project.current_state_version"
         ),
         source_context=string_tuple(data["source_context"], "manifest.project.source_context"),
-        unresolved_areas=list(
-            string_tuple(data["unresolved_areas"], "manifest.project.unresolved_areas")
+        unresolved_areas=string_tuple(
+            data["unresolved_areas"], "manifest.project.unresolved_areas"
         ),
     )
 
@@ -274,10 +274,10 @@ def decode_question(value: Any, context: str) -> Question:
         answer_status=enum_value(
             DecisionStatus, data["answer_status"], f"{context}.answer_status"
         ),
-        derived_implications=list(
-            string_tuple(data["derived_implications"], f"{context}.derived_implications")
+        derived_implications=string_tuple(
+            data["derived_implications"], f"{context}.derived_implications"
         ),
-        trace_refs=list(string_tuple(data["trace_refs"], f"{context}.trace_refs")),
+        trace_refs=string_tuple(data["trace_refs"], f"{context}.trace_refs"),
     )
 
 
@@ -340,19 +340,19 @@ def decode_round(value: Any, context: str) -> DesignRound:
         topic=as_string(data["topic"], f"{context}.topic"),
         purpose=as_string(data["purpose"], f"{context}.purpose"),
         prerequisites=string_tuple(data["prerequisites"], f"{context}.prerequisites"),
-        questions=[
+        questions=tuple(
             decode_question(item, f"{context}.questions[{index}]")
             for index, item in enumerate(as_list(data["questions"], f"{context}.questions"))
-        ],
+        ),
         owner_answer_set=answers,
-        synthesis=list(string_tuple(data["synthesis"], f"{context}.synthesis")),
-        derived_rules=list(string_tuple(data["derived_rules"], f"{context}.derived_rules")),
-        unresolved=list(string_tuple(data["unresolved"], f"{context}.unresolved")),
-        conflicts_detected=list(
-            string_tuple(data["conflicts_detected"], f"{context}.conflicts_detected")
+        synthesis=string_tuple(data["synthesis"], f"{context}.synthesis"),
+        derived_rules=string_tuple(data["derived_rules"], f"{context}.derived_rules"),
+        unresolved=string_tuple(data["unresolved"], f"{context}.unresolved"),
+        conflicts_detected=string_tuple(
+            data["conflicts_detected"], f"{context}.conflicts_detected"
         ),
         status=enum_value(DecisionStatus, data["status"], f"{context}.status"),
-        trace_refs=list(string_tuple(data["trace_refs"], f"{context}.trace_refs")),
+        trace_refs=string_tuple(data["trace_refs"], f"{context}.trace_refs"),
     )
 
 

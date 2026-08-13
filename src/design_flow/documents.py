@@ -41,6 +41,7 @@ class LivingApplicationDocumentRenderer:
         current_state: CurrentDesignState,
         concepts: CoreConceptRegistry,
         ledger: DecisionLedger,
+        unresolved_register: tuple[str, ...] | None = None,
     ) -> str:
         document_id = f"{project.project_id}.LIVING_APPLICATION"
         lines = [
@@ -113,14 +114,21 @@ class LivingApplicationDocumentRenderer:
                 ]
             )
 
-        concept_unresolved = [
-            item
-            for concept in (*concepts.concepts, *concepts.affected)
-            for item in concept.unresolved
-        ]
-        unresolved = tuple(dict.fromkeys((*current_state.unresolved, *concept_unresolved)))
+        if unresolved_register is None:
+            concept_unresolved = [
+                item
+                for concept in (*concepts.concepts, *concepts.affected)
+                for item in concept.unresolved
+            ]
+            unresolved_register = tuple(
+                dict.fromkeys((*current_state.unresolved, *concept_unresolved))
+            )
         lines.extend(["## Unresolved Register", ""])
-        lines.extend(self._bullet_block(unresolved, "No unresolved items are currently registered."))
+        lines.extend(
+            self._bullet_block(
+                unresolved_register, "No unresolved items are currently registered."
+            )
+        )
 
         lines.extend(["## Affected / Unresolved Concepts", ""])
         if not concepts.affected:

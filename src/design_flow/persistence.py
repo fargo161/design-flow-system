@@ -41,6 +41,7 @@ from .model import (
     TraceAction,
 )
 from .session import DraftRound, SessionRecord, decode_draft, decode_session, encode_draft, encode_session
+from .unresolved import compile_unresolved_register
 
 
 APPLICATION_VERSION = "0.2.0"
@@ -72,6 +73,14 @@ RESERVED_PATHS = {
 
 class ProjectValidationError(ValueError):
     """Persisted project material failed before semantic activation."""
+
+
+class PromotionError(ProjectValidationError):
+    """Promotion failed before its explicit candidate-to-target commit point."""
+
+    def __init__(self, message: str, *, preserve_candidate: bool = False) -> None:
+        super().__init__(message)
+        self.preserve_candidate = preserve_candidate
 
 
 @dataclass(slots=True, frozen=True)
@@ -387,16 +396,6 @@ def _manifest_projection(value: ProjectManifest) -> ProjectManifest:
     return replace(value, authoritative_files=entries)
 
 
-def _unresolved_items(workspace: DesignFlowWorkspace) -> tuple[str, ...]:
-    state = workspace.state_compiler.compile(workspace.project, workspace.ledger)
-    values: list[str] = [*state.unresolved]
-    for design_round in workspace.rounds.rounds:
-        values.extend(design_round.unresolved)
-    for concept in (*workspace.concepts.concepts, *workspace.concepts.affected):
-        values.extend(concept.unresolved)
-    return tuple(dict.fromkeys(values))
-
-
 def _workspace_payloads(
     workspace: DesignFlowWorkspace, generation: int
 ) -> dict[str, dict[str, JsonValue]]:
@@ -433,7 +432,7 @@ def _workspace_payloads(
             project_id=project_id,
             role=AUTHORITATIVE_ROLES["unresolved.json"],
             generation=generation,
-            data={"items": list(_unresolved_items(workspace))},
+            data={"items": list(compile_unresolved_register(workspace))},
         ),
         "trace.json": _envelope(
             project_id=project_id,
@@ -520,6 +519,9 @@ def _artifact_bytes(content: ArtifactContent, generation: int) -> bytes:
 class ProjectStore:
     """Save and load complete projects through a strict activation boundary."""
 
+    def __init__(self) -> None:
+        self.last_recovery_warning: str | None = None
+
     def create(
         self,
         path: str | Path,
@@ -555,6 +557,7 @@ class ProjectStore:
         artifacts: Mapping[str, ArtifactContent] | None = None,
         prior_manifest: ProjectManifest | None = None,
     ) -> ProjectManifest:
+        self.last_recovery_warning = None
         target = Path(path).resolve()
         if prior_manifest is None and target.exists():
             prior_manifest = self._read_manifest(target)
@@ -565,6 +568,7 @@ class ProjectStore:
             tempfile.mkdtemp(prefix=f".{target.name}.candidate-", dir=parent)
         )
         promoted = False
+        preserve_candidate = False
         try:
             if target.exists():
                 shutil.copytree(target, candidate, dirs_exist_ok=True)
@@ -649,11 +653,14 @@ class ProjectStore:
             _write_bytes(candidate / "manifest.json", canonical_json_bytes(manifest_to_data(manifest)))
 
             self.load(candidate, check_recovery=False, regenerate_cache=False)
-            self._promote(candidate, target)
+            self.last_recovery_warning = self._promote(candidate, target)
             promoted = True
             return manifest
+        except PromotionError as error:
+            preserve_candidate = error.preserve_candidate
+            raise
         finally:
-            if not promoted and candidate.exists():
+            if not promoted and not preserve_candidate and candidate.exists():
                 shutil.rmtree(candidate, ignore_errors=True)
 
     def load(
@@ -781,6 +788,36 @@ class ProjectStore:
             if draft_data["draft"] is None
             else decode_draft(draft_data["draft"], "working/draft.json.data.draft")
         )
+        known_rounds = {item.round_id for item in workspace.rounds.rounds}
+        working_rounds = {draft.round_id} if draft is not None else set()
+        for session in sessions:
+            touched = set(session.rounds_touched)
+            committed = set(session.rounds_committed)
+            if touched - (known_rounds | working_rounds):
+                raise ProjectValidationError(
+                    f"Session {session.session_id} touches unknown rounds"
+                )
+            if committed - known_rounds:
+                raise ProjectValidationError(
+                    f"Session {session.session_id} commits unknown rounds"
+                )
+            if committed - touched:
+                raise ProjectValidationError(
+                    f"Session {session.session_id} committed rounds it never touched"
+                )
+            if any(
+                generation < 1 or generation > manifest.save_generation
+                for generation in session.save_generations
+            ):
+                raise ProjectValidationError(
+                    f"Session {session.session_id} has invalid save generations"
+                )
+            if tuple(sorted(set(session.save_generations))) != session.save_generations:
+                raise ProjectValidationError(
+                    f"Session {session.session_id} save generations must be unique/increasing"
+                )
+        if sum(item.ended_at is None for item in sessions) > 1:
+            raise ProjectValidationError("At most one persisted session may remain open")
         source_data = strict_object(
             parsed["sources/index.json"], {"sources"}, "sources/index.json.data"
         )
@@ -1080,26 +1117,84 @@ class ProjectStore:
                 raise ProjectValidationError(str(error)) from error
 
         supersession_edges: dict[str, list[str]] = {}
+        direct_supersessions: list[tuple[str, str]] = []
         for relation in workspace.ledger.relationships:
             if relation.earlier_decision not in decisions or relation.later_decision not in decisions:
                 raise ProjectValidationError("Decision relationship references an unknown decision")
             if relation.relation is ConflictRelation.SUPERSEDES:
+                edge = (relation.earlier_decision, relation.later_decision)
+                if edge in direct_supersessions:
+                    raise ProjectValidationError(
+                        f"Duplicate SUPERSEDES relationship: {edge[0]} -> {edge[1]}"
+                    )
+                if any(earlier == edge[0] for earlier, _ in direct_supersessions):
+                    raise ProjectValidationError(
+                        f"Decision {edge[0]} has multiple direct replacements"
+                    )
+                direct_supersessions.append(edge)
                 earlier = decisions[relation.earlier_decision]
                 later = decisions[relation.later_decision]
                 if earlier.status is not DecisionStatus.SUPERSEDED:
                     raise ProjectValidationError("SUPERSEDES relation has a non-historical predecessor")
                 if earlier.decision_id not in later.supersedes:
                     raise ProjectValidationError("SUPERSEDES lineage disagrees with relationship ledger")
-                event = any(
+                events = [
                     item.action is TraceAction.SUPERSEDE
                     and item.entity_id == earlier.decision_id
                     and item.details.get("replaced_by") == later.decision_id
                     for item in workspace.trace.records
+                ]
+                matching_trace = tuple(
+                    item.trace_id
+                    for item, matches in zip(workspace.trace.records, events)
+                    if matches
                 )
-                if not event:
+                if len(matching_trace) != 1:
                     raise ProjectValidationError("SUPERSEDES relationship lacks matching TRACE")
+                trace_id = matching_trace[0]
+                if trace_id not in earlier.trace_refs or trace_id not in later.trace_refs:
+                    raise ProjectValidationError(
+                        "SUPERSEDES relationship TRACE is not bound to both decisions"
+                    )
                 supersession_edges.setdefault(earlier.decision_id, []).append(later.decision_id)
         self._reject_cycles(supersession_edges)
+
+        outgoing = {earlier: later for earlier, later in direct_supersessions}
+        for decision in workspace.ledger.decisions:
+            if decision.status is DecisionStatus.SUPERSEDED and decision.decision_id not in outgoing:
+                raise ProjectValidationError(
+                    f"SUPERSEDED decision {decision.decision_id} has no replacement relationship"
+                )
+
+        incoming: dict[str, list[str]] = {}
+        for earlier, later in direct_supersessions:
+            incoming.setdefault(later, []).append(earlier)
+
+        def canonical_ancestry(decision_id: str) -> tuple[str, ...]:
+            ancestry: list[str] = []
+            for predecessor in incoming.get(decision_id, []):
+                for item in (*canonical_ancestry(predecessor), predecessor):
+                    if item not in ancestry:
+                        ancestry.append(item)
+            return tuple(ancestry)
+
+        for decision in workspace.ledger.decisions:
+            expected = canonical_ancestry(decision.decision_id)
+            if decision.supersedes != expected:
+                raise ProjectValidationError(
+                    f"Decision {decision.decision_id} supersedes ancestry disagrees with graph: "
+                    f"expected {expected}, got {decision.supersedes}"
+                )
+
+        relationship_edges = set(direct_supersessions)
+        for event in workspace.trace.records:
+            if event.action is not TraceAction.SUPERSEDE:
+                continue
+            replacement = event.details.get("replaced_by")
+            if type(replacement) is not str or (event.entity_id, replacement) not in relationship_edges:
+                raise ProjectValidationError(
+                    f"Orphaned SUPERSEDE TRACE event: {event.trace_id}"
+                )
 
         for group_name, group in (
             ("current", workspace.concepts.concepts),
@@ -1168,7 +1263,7 @@ class ProjectStore:
                         f"Concept {concept.concept_id} is in the wrong registry partition"
                     )
 
-        if persisted_unresolved != _unresolved_items(workspace):
+        if persisted_unresolved != compile_unresolved_register(workspace):
             raise ProjectValidationError("Persisted unresolved register disagrees with semantic state")
         workspace.state_compiler.compile(workspace.project, workspace.ledger)
 
@@ -1225,17 +1320,47 @@ class ProjectStore:
                 f"Interrupted save artifacts require owner review before activation: {names}"
             )
 
-    def _promote(self, candidate: Path, target: Path) -> None:
+    def _promote(self, candidate: Path, target: Path) -> str | None:
+        """Promote at candidate-to-target rename; cleanup is post-commit recovery work."""
+
         backup = target.parent / f".{target.name}.backup-{uuid4().hex}"
         if not target.exists():
-            os.replace(candidate, target)
-            return
-        os.replace(target, backup)
+            try:
+                os.replace(candidate, target)
+            except OSError as error:
+                raise PromotionError(
+                    f"Candidate promotion failed before commit: {error}"
+                ) from error
+            return None
+        try:
+            os.replace(target, backup)
+        except OSError as error:
+            raise PromotionError(
+                f"Target-to-backup rename failed before commit: {error}"
+            ) from error
         try:
             os.replace(candidate, target)
-        except BaseException:
-            if not target.exists() and backup.exists():
+        except OSError as promotion_error:
+            try:
                 os.replace(backup, target)
-            raise
-        else:
+            except OSError as rollback_error:
+                raise PromotionError(
+                    "Candidate promotion failed before commit and prior-state rollback "
+                    f"also failed; recovery artifacts preserved: {promotion_error}; "
+                    f"rollback: {rollback_error}",
+                    preserve_candidate=True,
+                ) from rollback_error
+            raise PromotionError(
+                f"Candidate promotion failed before commit; prior target restored: "
+                f"{promotion_error}"
+            ) from promotion_error
+
+        # Commit point: candidate now owns the canonical target path.
+        try:
             shutil.rmtree(backup)
+        except OSError as error:
+            return (
+                "Storage promotion committed, but backup cleanup failed; "
+                f"future ordinary activation requires recovery review: {backup.name}: {error}"
+            )
+        return None

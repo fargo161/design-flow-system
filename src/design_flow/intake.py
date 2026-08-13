@@ -22,6 +22,7 @@ from .model import (
 )
 from .rounds import RoundManager
 from .trace import TraceLog
+from .unresolved import compile_unresolved_register
 
 
 class DesignFlowWorkspace:
@@ -71,7 +72,7 @@ class DesignFlowWorkspace:
                 current_mode=mode,
                 authority=authority,
                 source_context=source_context,
-                unresolved_areas=list(unresolved_areas),
+                unresolved_areas=unresolved_areas,
             )
         )
 
@@ -137,7 +138,9 @@ class DesignFlowWorkspace:
             dependencies=dependencies,
             unresolved_consequences=unresolved_consequences,
         )
-        return self.ledger.register(decision)
+        registered = self.ledger.register(decision)
+        self.rounds.record_synthesis(round_id, registered.canonical_rule)
+        return registered
 
     def register_concept_from_decision(self, decision: Decision, **fields: Any) -> CoreConcept:
         return self.concepts.register_from_decision(decision, **fields)
@@ -149,6 +152,7 @@ class DesignFlowWorkspace:
             state,
             self.concepts,
             self.ledger,
+            compile_unresolved_register(self),
         )
 
     def record_application_document_generation(self) -> str:

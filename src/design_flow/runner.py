@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .model import DesignFlowMode
 from .project import PersistentProject
+from .unresolved import compile_unresolved_register
 
 
 HELP = """Commands:
@@ -15,6 +16,7 @@ UNRESOLVED             committed unresolved register
 CONCEPTS               current and affected concepts
 TRACE                  chronological TRACE
 ROUND                  current non-authoritative draft
+IMPORT DRAFT <path>    originate a strict JSON draft
 ANSWER <question> <raw owner answer>
 EDIT <question> <raw owner answer>
 PREVIEW                 non-authoritative draft synthesis
@@ -53,10 +55,8 @@ class CommandRunner:
                 for item in self.project.workspace.ledger.decisions
             ) or "No committed decisions."
         if command == "UNRESOLVED":
-            state = self.project.workspace.state_compiler.compile(
-                self.project.workspace.project, self.project.workspace.ledger
-            )
-            return "\n".join(state.unresolved) or "No unresolved items."
+            unresolved = compile_unresolved_register(self.project.workspace)
+            return "\n".join(unresolved) or "No unresolved items."
         if command == "CONCEPTS":
             return "\n".join(
                 f"{item.concept_id} [{item.status.value}] {item.definition}"
@@ -79,6 +79,15 @@ class CommandRunner:
                 "DRAFT — NON-AUTHORITATIVE\n"
                 f"{draft.round_id}: {draft.topic}\nAnswered: {answers}\n"
                 f"Complete: {'yes' if draft.complete else 'no'}"
+            )
+        if command == "IMPORT" and argument.upper().startswith("DRAFT "):
+            path = argument[6:].strip()
+            if not path:
+                raise ValueError("Usage: IMPORT DRAFT <path>")
+            draft = self.project.import_draft(path)
+            return (
+                f"Imported draft {draft.draft_id} for round {draft.round_id}; "
+                "still non-authoritative."
             )
         if command in {"ANSWER", "EDIT"}:
             question_id, separator, raw_answer = argument.partition(" ")
@@ -104,16 +113,22 @@ class CommandRunner:
                 f"Committed round {committed.round_id}.\n"
                 f"Recommended next round: {recommendation.recommended_next_round}\n"
                 f"Why: {recommendation.recommendation_reason}"
+                f"{self.project.storage_warning_suffix()}"
             )
         if command == "ABANDON":
             self.project.abandon_draft()
             return "Draft abandoned; committed authority was unchanged."
         if command == "SAVE":
             manifest = self.project.save()
-            return f"Saved generation {manifest.save_generation}."
+            return (
+                f"Saved generation {manifest.save_generation}."
+                f"{self.project.storage_warning_suffix()}"
+            )
         if command == "COMPILE":
             paths = self.project.compile_artifacts()
-            return "Generated: " + ", ".join(paths)
+            return (
+                "Generated: " + ", ".join(paths) + self.project.storage_warning_suffix()
+            )
         if command == "END" and argument.strip().upper() == "SESSION":
             session = self.project.end_session()
             return f"Ended session {session.session_id}."
@@ -162,7 +177,8 @@ def main() -> None:
         )
     else:
         raise ValueError("Choose exactly NEW PROJECT or RESUME PROJECT")
-    project.start_session()
+    if project.active_session is None:
+        project.start_session()
     run_console(project)
 
 

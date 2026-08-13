@@ -118,7 +118,7 @@ class ProjectCase(unittest.TestCase):
         before_ids = tuple(item.trace_id for item in self.project.workspace.trace.records)
         resumed = PersistentProject.resume(self.root)
         self.assertEqual("project-stable", resumed.workspace.project.project_id)
-        self.assertEqual(["Initial seam"], resumed.workspace.project.unresolved_areas)
+        self.assertEqual(("Initial seam",), resumed.workspace.project.unresolved_areas)
         self.assertEqual("round-1", resumed.workspace.rounds.rounds[0].round_id)
         self.assertEqual("decision-1", resumed.workspace.ledger.decisions[0].decision_id)
         self.assertEqual(before_ids, tuple(item.trace_id for item in resumed.workspace.trace.records))

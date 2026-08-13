@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from .intake import DesignFlowWorkspace
 from .model import ConflictRelation, DecisionStatus
 from .session import SessionRecord
+from .unresolved import compile_unresolved_register
 
 
 @dataclass(slots=True, frozen=True)
@@ -24,11 +25,11 @@ def recommend_next_round(workspace: DesignFlowWorkspace) -> RoundRecommendation:
             "Resolve affected concepts",
             f"Supersession left explicit concept work: {names}.",
         )
-    state = workspace.state_compiler.compile(workspace.project, workspace.ledger)
-    if state.unresolved:
+    unresolved = compile_unresolved_register(workspace)
+    if unresolved:
         return RoundRecommendation(
             "Resolve the oldest open seam",
-            f"The unresolved register begins with: {state.unresolved[0]}",
+            f"The unresolved register begins with: {unresolved[0]}",
         )
     return RoundRecommendation(
         "Refine the next owner-selected boundary",
@@ -43,6 +44,7 @@ def compile_context_handoff(
     """Compile compact but sufficient continuity from structured authority."""
 
     state = workspace.state_compiler.compile(workspace.project, workspace.ledger)
+    unresolved = compile_unresolved_register(workspace)
     recommendation = recommend_next_round(workspace)
     active = [item for item in state.decisions if item.status is not DecisionStatus.SUPERSEDED]
     supersessions = [
@@ -91,8 +93,8 @@ def compile_context_handoff(
         lines.append("- No committed decision history.")
 
     lines.extend(["", "## Unresolved Register", ""])
-    lines.extend(f"- {item}" for item in state.unresolved)
-    if not state.unresolved:
+    lines.extend(f"- {item}" for item in unresolved)
+    if not unresolved:
         lines.append("- None.")
 
     lines.extend(["", "## Core Concepts", ""])

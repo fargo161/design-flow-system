@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 
 from .model import (
     DecisionStatus,
@@ -88,7 +89,6 @@ class RoundManager:
     def register_round(self, design_round: DesignRound) -> DesignRound:
         if design_round.round_id in self._rounds:
             raise ValueError(f"Round already exists: {design_round.round_id}")
-        self._rounds[design_round.round_id] = design_round
         trace_id = self.trace.record(
             TraceAction.REGISTER_ROUND,
             "round",
@@ -96,8 +96,11 @@ class RoundManager:
             topic=design_round.topic,
             mode=self.project.current_mode.value,
         )
-        design_round.trace_refs.append(trace_id)
-        return design_round
+        registered = replace(
+            design_round, trace_refs=(*design_round.trace_refs, trace_id)
+        )
+        self._rounds[design_round.round_id] = registered
+        return registered
 
     def get(self, round_id: str) -> DesignRound:
         try:
@@ -109,26 +112,27 @@ class RoundManager:
         design_round = self.get(round_id)
         if any(item.question_id == question.question_id for item in design_round.questions):
             raise ValueError(f"Question already exists: {question.question_id}")
-        design_round.questions.append(question)
-        question.trace_refs.append(
+        trace_refs = (
             self.trace.record(
                 TraceAction.REGISTER_QUESTION,
                 "question",
                 question.question_id,
                 round_id=round_id,
                 question_type=question.question_type.value,
-            )
-        )
-        question.trace_refs.append(
+            ),
             self.trace.record(
                 TraceAction.RECOMMEND,
                 "question",
                 question.question_id,
                 proposed_answer=list(question.recommendation.proposed_answer),
                 reason=question.recommendation.reason,
-            )
+            ),
         )
-        return question
+        registered = replace(question, trace_refs=trace_refs)
+        self._rounds[round_id] = replace(
+            design_round, questions=(*design_round.questions, registered)
+        )
+        return registered
 
     def record_owner_answer(self, round_id: str, question_id: str, raw_value: str) -> OwnerAnswer:
         design_round = self.get(round_id)
@@ -148,10 +152,8 @@ class RoundManager:
                 else None
             ),
         )
-        question.owner_answer = answer
-        question.answer_status = answer.status
-        design_round.owner_answer_set[question_id] = answer
-        question.trace_refs.append(
+        trace_refs = (
+            *question.trace_refs,
             self.trace.record(
                 TraceAction.OWNER_SELECT,
                 "question",
@@ -160,25 +162,59 @@ class RoundManager:
                 normalized_value=list(answer.normalized_value),
                 qualifiers=list(answer.qualifiers),
                 status=answer.status.value,
-            )
+            ),
         )
+        implications = question.derived_implications
+        unresolved = design_round.unresolved
 
         if answer.status is DecisionStatus.UNRESOLVED:
             follow_up = self._follow_up_for(answer)
-            if follow_up not in design_round.unresolved:
-                design_round.unresolved.append(follow_up)
-            question.derived_implications.append(follow_up)
-            question.trace_refs.append(
+            if follow_up not in unresolved:
+                unresolved = (*unresolved, follow_up)
+            implications = (*implications, follow_up)
+            trace_refs = (
+                *trace_refs,
                 self.trace.record(
                     TraceAction.MARK_UNRESOLVED,
                     "question",
                     question_id,
                     follow_up=follow_up,
-                )
+                ),
             )
-
-        self._refresh_round_status(design_round)
+        updated_question = replace(
+            question,
+            owner_answer=answer,
+            answer_status=answer.status,
+            derived_implications=implications,
+            trace_refs=trace_refs,
+        )
+        answers = dict(design_round.owner_answer_set)
+        answers[question_id] = answer
+        questions = tuple(
+            updated_question if item.question_id == question_id else item
+            for item in design_round.questions
+        )
+        updated_round = replace(
+            design_round,
+            questions=questions,
+            owner_answer_set=answers,
+            unresolved=unresolved,
+        )
+        updated_round = replace(updated_round, status=self._round_status(updated_round))
+        self._rounds[round_id] = updated_round
         return answer
+
+    def record_synthesis(self, round_id: str, canonical_rule: str) -> DesignRound:
+        """Replace a committed round snapshot after authorized synthesis."""
+
+        design_round = self.get(round_id)
+        updated = replace(
+            design_round,
+            synthesis=(*design_round.synthesis, canonical_rule),
+            derived_rules=(*design_round.derived_rules, canonical_rule),
+        )
+        self._rounds[round_id] = updated
+        return updated
 
     def record_owner_answers(self, round_id: str, compact_answers: str) -> dict[str, OwnerAnswer]:
         """Record strings such as ``1B, 2A, 3 Yes`` by question order."""
@@ -207,10 +243,9 @@ class RoundManager:
         return f"Clarify the owner answer for {answer.source_question}."
 
     @staticmethod
-    def _refresh_round_status(design_round: DesignRound) -> None:
+    def _round_status(design_round: DesignRound) -> DecisionStatus:
         if not design_round.questions or len(design_round.owner_answer_set) < len(design_round.questions):
-            design_round.status = DecisionStatus.OPEN
+            return DecisionStatus.OPEN
         elif any(answer.status is DecisionStatus.UNRESOLVED for answer in design_round.owner_answer_set.values()):
-            design_round.status = DecisionStatus.UNRESOLVED
-        else:
-            design_round.status = DecisionStatus.OWNER_SELECTED
+            return DecisionStatus.UNRESOLVED
+        return DecisionStatus.OWNER_SELECTED

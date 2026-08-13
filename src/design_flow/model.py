@@ -170,6 +170,9 @@ class Recommendation:
     reason: str
     status: DecisionStatus = DecisionStatus.PROPOSED
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "proposed_answer", tuple(self.proposed_answer))
+
 
 @dataclass(slots=True, frozen=True)
 class OwnerAnswer:
@@ -180,12 +183,16 @@ class OwnerAnswer:
     source_round: str
     source_question: str
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "normalized_value", tuple(self.normalized_value))
+        object.__setattr__(self, "qualifiers", tuple(self.qualifiers))
+
     @property
     def qualifier(self) -> str | None:
         return "; ".join(self.qualifiers) if self.qualifiers else None
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class Question:
     question_id: str
     text: str
@@ -194,10 +201,13 @@ class Question:
     recommendation: Recommendation
     owner_answer: OwnerAnswer | None = None
     answer_status: DecisionStatus = DecisionStatus.PROPOSED
-    derived_implications: list[str] = field(default_factory=list)
-    trace_refs: list[str] = field(default_factory=list)
+    derived_implications: tuple[str, ...] = ()
+    trace_refs: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "options", tuple(self.options))
+        object.__setattr__(self, "derived_implications", tuple(self.derived_implications))
+        object.__setattr__(self, "trace_refs", tuple(self.trace_refs))
         keys = [option.key.upper() for option in self.options]
         if not self.question_id.strip() or not self.text.strip():
             raise ValueError("Questions require an id and text")
@@ -212,20 +222,35 @@ class Question:
         return tuple(option.key.upper() for option in self.options)
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class DesignRound:
     round_id: str
     topic: str
     purpose: str
     prerequisites: tuple[str, ...] = ()
-    questions: list[Question] = field(default_factory=list)
-    owner_answer_set: dict[str, OwnerAnswer] = field(default_factory=dict)
-    synthesis: list[str] = field(default_factory=list)
-    derived_rules: list[str] = field(default_factory=list)
-    unresolved: list[str] = field(default_factory=list)
-    conflicts_detected: list[str] = field(default_factory=list)
+    questions: tuple[Question, ...] = ()
+    owner_answer_set: Mapping[str, OwnerAnswer] = field(default_factory=dict)
+    synthesis: tuple[str, ...] = ()
+    derived_rules: tuple[str, ...] = ()
+    unresolved: tuple[str, ...] = ()
+    conflicts_detected: tuple[str, ...] = ()
     status: DecisionStatus = DecisionStatus.OPEN
-    trace_refs: list[str] = field(default_factory=list)
+    trace_refs: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "prerequisites",
+            "questions",
+            "synthesis",
+            "derived_rules",
+            "unresolved",
+            "conflicts_detected",
+            "trace_refs",
+        ):
+            object.__setattr__(self, field_name, tuple(getattr(self, field_name)))
+        object.__setattr__(
+            self, "owner_answer_set", MappingProxyType(dict(self.owner_answer_set))
+        )
 
     def question(self, question_id: str) -> Question:
         for item in self.questions:
@@ -234,7 +259,7 @@ class DesignRound:
         raise KeyError(f"Unknown question: {question_id}")
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class Project:
     project_id: str
     name: str
@@ -243,7 +268,11 @@ class Project:
     authority: str
     current_state_version: str = "0.2.0"
     source_context: tuple[str, ...] = ()
-    unresolved_areas: list[str] = field(default_factory=list)
+    unresolved_areas: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "source_context", tuple(self.source_context))
+        object.__setattr__(self, "unresolved_areas", tuple(self.unresolved_areas))
 
 
 @dataclass(slots=True, frozen=True)

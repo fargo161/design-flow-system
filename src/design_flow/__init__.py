@@ -41,6 +41,7 @@ from .session import (
     DraftRound,
     SessionRecord,
 )
+from .unresolved import compile_unresolved_register
 
 __all__ = [
     "ApplicationBinding",
@@ -90,6 +91,7 @@ __all__ = [
     "compile_context_handoff",
     "recommend_next_round",
     "request_draft",
+    "compile_unresolved_register",
 ]
 
 __version__ = "0.2.0"

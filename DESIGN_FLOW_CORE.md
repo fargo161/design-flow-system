@@ -31,7 +31,7 @@ Qualified input such as `A + C depending on context` retains selections `A` and 
 
 ## Project and Session
 
-A project owns the durable semantic lineage: identity, rounds, answers, decisions, relationships, concepts, unresolved state, and TRACE. A session is non-semantic metadata about one bounded operating episode. Starting a new session resumes the same project lineage and never registers a second project authority event.
+A project owns the durable semantic lineage: identity, rounds, answers, decisions, relationships, concepts, unresolved state, and TRACE. Project metadata and committed round/question history are immutable snapshots. A session is non-semantic metadata about one bounded operating episode. Resume reuses the one persisted open session; starting a later session continues the same project lineage and never registers a second project authority event.
 
 Session metadata can record timestamps, rounds touched and committed, storage generations, and generated artifacts. Raw transcripts are neither required nor authoritative.
 
@@ -49,11 +49,11 @@ round + questions + owner answers
 → explicit supersession
 → concept registration/revision
 → semantic validation
-→ complete atomic checkpoint candidate
+→ complete validated checkpoint candidate
 → promotion
 ```
 
-Any failure rejects the candidate, retains the submitted draft, and leaves both in-memory and durable authority unchanged.
+Any failure before storage promotion rejects the candidate, retains the submitted draft, and leaves both in-memory and durable authority unchanged. Once the validated candidate is renamed to the canonical target, storage is committed. A later backup-cleanup failure is reported as a recovery warning; it does not falsely undo the new authority.
 
 ## Decisions, Correction, and Current State
 
@@ -65,7 +65,9 @@ The current-state compiler excludes `SUPERSEDED` decisions but never edits the l
 new owner answer → new decision → guarded SUPERSEDES edge
 ```
 
-Committed records are immutable snapshots. Supersession rejects self-links, ineligible replacements, duplicates, and cycles. A new decision preserves transitive predecessor identity.
+Committed records are immutable snapshots. The in-memory manager performs authorized changes by replacing whole round/question snapshots rather than exposing live mutable history. Drafts remain editable through immutable-replacement draft APIs.
+
+Supersession rejects self-links, ineligible replacements, duplicates, multiple direct replacements, and cycles. Activation derives ancestry from the relationship graph and requires exact agreement among decision status, direct edges, transitive `supersedes` lineage, and one bound TRACE event per edge. A new decision preserves transitive predecessor identity.
 
 ## Concepts
 
@@ -89,13 +91,13 @@ Authoritative JSON includes complete round history, the decision ledger, concept
 
 All registered JSON is deterministic plain data. Unknown fields are rejected. Every registered file records the same save generation and a SHA-256 content hash. The manifest's own hash uses the documented projection in which its self-hash field is empty.
 
-Semantic activation occurs only after schema, hash, generation, role, identity, provenance, lifecycle, cross-reference, unresolved, and compilation checks all pass. There is no partial activation or generated-document fallback.
+Semantic activation occurs only after schema, hash, generation, role, identity, provenance, lifecycle, cross-reference, unresolved, session-consistency, and compilation checks all pass. There is no partial activation or generated-document fallback.
 
 ## Save Semantics
 
 Save generation counts successful storage checkpoints. It is not a decision or concept version and does not append TRACE.
 
-A complete candidate directory is written and validated beside the target. Promotion uses same-parent renames with a backup/restore path. That protects the prior valid directory from ordinary write or second-rename failure, but it is not described as a universal crash-atomic multi-directory transaction. Candidate or backup remnants block subsequent activation until reviewed.
+A complete candidate directory is written and validated beside the target. Promotion uses same-parent renames with a backup/restore path. The explicit commit point is the successful candidate-to-target rename. Failures before it preserve or restore prior authority; rollback failure preserves both recovery artifacts. Backup cleanup is post-commit work, so cleanup failure returns a recovery warning while the new target remains canonical and future ordinary activation is blocked for review. This is not described as a universal crash-atomic multi-directory transaction.
 
 See [docs/PERSISTENCE.md](docs/PERSISTENCE.md) for byte-level and recovery details.
 
@@ -103,7 +105,7 @@ See [docs/PERSISTENCE.md](docs/PERSISTENCE.md) for byte-level and recovery detai
 
 `cache/current_state.json` is disposable. Load regenerates it when absent, malformed, built by another compiler version, or from another generation.
 
-The living-application renderer and context-handoff compiler operate only on committed state. Artifacts record source generation and compiler identity/version. A stale artifact is reportable and regenerable, not a reason to reject the project.
+The living-application renderer and context-handoff compiler operate only on committed state. One canonical unresolved-register compiler combines current-state, round, and current/affected concept seams; persistence, runner, session brief, handoff, recommendation, and the living document all use it. Artifacts record source generation and compiler identity/version. A stale artifact is reportable and regenerable, not a reason to reject the project.
 
 Context handoff includes project identity, mode, current rules, decision provenance, unresolved work, concepts, supersession history, recent TRACE, one advisory next-round recommendation, and session continuity. It never treats raw chat as continuity authority.
 
@@ -127,6 +129,7 @@ An LLM adapter may propose questions, options, recommendations, or an entire `Dr
 - `handoff.py`: context handoff and recommendation.
 - `llm.py`: optional proposal protocol.
 - `runner.py`: command-oriented interaction.
+- `unresolved.py`: canonical complete unresolved-register compilation.
 
 ## Non-Goals and Deferred Work
 

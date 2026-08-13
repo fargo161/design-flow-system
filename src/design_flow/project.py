@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
@@ -24,7 +25,9 @@ from .session import (
     DraftRound,
     SessionRecord,
     utc_now,
+    decode_draft,
 )
+from .unresolved import compile_unresolved_register
 
 
 @dataclass(slots=True, frozen=True)
@@ -57,7 +60,9 @@ class PersistentProject:
         self.draft = loaded.draft
         self.sources = loaded.sources
         self.store = store or ProjectStore()
-        self.active_session_id: str | None = None
+        self.last_storage_warning: str | None = None
+        open_sessions = [item.session_id for item in self.sessions if item.ended_at is None]
+        self.active_session_id: str | None = open_sessions[0] if open_sessions else None
 
     @classmethod
     def create(
@@ -153,6 +158,18 @@ class PersistentProject:
         sessions = self._replace_session(session)
         self._checkpoint(sessions=sessions, draft=draft)
 
+    def import_draft(self, path: str | Path) -> DraftRound:
+        """Originate working state from one strict, non-authoritative JSON draft."""
+
+        source = Path(path)
+        try:
+            value = json.loads(source.read_text(encoding="utf-8"))
+            draft = decode_draft(value, "imported draft")
+        except (OSError, TypeError, ValueError) as error:
+            raise ValueError(f"Cannot import draft {source}: {error}") from error
+        self.set_draft(draft)
+        return draft
+
     def answer_draft(self, question_id: str, raw_value: str) -> DraftRound:
         draft = self._require_draft().answer(question_id, raw_value)
         session = self._require_session().touch_round(draft.round_id)
@@ -182,7 +199,6 @@ class PersistentProject:
         try:
             affected_before = {item.concept_id for item in candidate.concepts.affected}
             self._apply_draft(candidate, draft)
-            state = candidate.state_compiler.compile(candidate.project, candidate.ledger)
             affected_after = {item.concept_id for item in candidate.concepts.affected}
             return DraftPreview(
                 "DRAFT PREVIEW — NON-AUTHORITATIVE",
@@ -193,7 +209,7 @@ class PersistentProject:
                     if item.supersedes_decision is not None
                 ),
                 tuple(sorted(affected_after - affected_before)),
-                state.unresolved,
+                compile_unresolved_register(candidate),
             )
         except (KeyError, TypeError, ValueError) as error:
             return DraftPreview(
@@ -201,7 +217,7 @@ class PersistentProject:
             )
 
     def lock_draft(self) -> DesignRound:
-        """Atomically turn one complete draft into authority, or change nothing."""
+        """Validate and promote one complete draft at the documented commit point."""
 
         draft = self._require_draft()
         session = self._require_session()
@@ -229,6 +245,7 @@ class PersistentProject:
         self.sessions = sessions
         self.draft = None
         self.manifest = manifest
+        self.last_storage_warning = self.store.last_recovery_warning
         return committed_round
 
     def save(self) -> ProjectManifest:
@@ -266,7 +283,7 @@ class PersistentProject:
             self.workspace.project.name,
             self.workspace.project.current_mode.value,
             tuple(item.canonical_rule for item in state.decisions),
-            state.unresolved,
+            compile_unresolved_register(self.workspace),
             rounds[-1].round_id if rounds else None,
             recommendation.topic,
             recommendation.reason,
@@ -299,7 +316,13 @@ class PersistentProject:
         self.draft = next_draft
         self.sources = next_sources
         self.manifest = manifest
+        self.last_storage_warning = self.store.last_recovery_warning
         return manifest
+
+    def storage_warning_suffix(self) -> str:
+        if self.last_storage_warning is None:
+            return ""
+        return f"\nWARNING: {self.last_storage_warning}"
 
     def _require_session(self) -> SessionRecord:
         session = self.active_session
@@ -392,4 +415,4 @@ class PersistentProject:
                     maturity=concept.maturity,
                     unresolved=concept.unresolved,
                 )
-        return design_round
+        return workspace.rounds.get(draft.round_id)
