@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from dataclasses import replace
 
 from .model import (
     ConflictRecord,
@@ -19,7 +20,9 @@ from .model import (
 from .trace import TraceLog
 
 
-RuleBuilder = Callable[[OwnerAnswer], str]
+RuleKey = str | tuple[str, ...]
+RuleMapping = Mapping[RuleKey, str]
+SupersessionListener = Callable[[Decision, Decision], None]
 
 
 class DecisionSynthesizer:
@@ -35,7 +38,7 @@ class DecisionSynthesizer:
         *,
         decision_id: str,
         scope: str,
-        rule_builder: RuleBuilder,
+        rule_mapping: RuleMapping,
         dependencies: tuple[str, ...] = (),
         unresolved_consequences: tuple[str, ...] = (),
     ) -> Decision:
@@ -44,7 +47,16 @@ class DecisionSynthesizer:
             raise ValueError("A decision cannot be synthesized before the owner answers")
 
         answer = question.owner_answer
-        canonical_rule = rule_builder(answer).strip()
+        rule_key: RuleKey = (
+            answer.normalized_value[0]
+            if len(answer.normalized_value) == 1
+            else answer.normalized_value
+        )
+        if rule_key not in rule_mapping:
+            raise ValueError(
+                f"No canonical rule is declared for authoritative owner value {answer.normalized_value}"
+            )
+        canonical_rule = rule_mapping[rule_key].strip()
         if not canonical_rule:
             raise ValueError("Synthesis must produce a non-empty canonical rule")
 
@@ -65,6 +77,7 @@ class DecisionSynthesizer:
             owner_qualifiers=answer.qualifiers,
             question_text=question.text,
             options=question.options,
+            rule_source_value=answer.normalized_value,
         )
         decision = Decision(
             decision_id=decision_id,
@@ -85,22 +98,28 @@ class DecisionSynthesizer:
             source_round=design_round.round_id,
             source_question=question.question_id,
             authoritative_value=list(answer.normalized_value),
+            rule_source_value=list(answer.normalized_value),
             recommendation_was=list(question.recommendation.proposed_answer),
+            canonical_rule=canonical_rule,
             status=status.value,
         )
-        decision.trace_refs.append(trace_id)
-        design_round.synthesis.append(canonical_rule)
-        design_round.derived_rules.append(canonical_rule)
+        decision = replace(decision, trace_refs=(trace_id,))
         return decision
 
 
 class DecisionLedger:
-    """Append-preserving history and explicit decision relationships."""
+    """Owner of immutable decision versions and explicit relationships.
+
+    DesignFlowWorkspace supplies the listener wiring that propagates
+    supersession into the separate concept registry. SUPERSEDES relationships
+    are reserved to supersede(), which replaces the affected ledger records.
+    """
 
     def __init__(self, trace: TraceLog) -> None:
         self.trace = trace
         self._decisions: dict[str, Decision] = {}
         self._relationships: list[ConflictRecord] = []
+        self._supersession_listeners: list[SupersessionListener] = []
 
     @property
     def decisions(self) -> tuple[Decision, ...]:
@@ -109,6 +128,18 @@ class DecisionLedger:
     @property
     def relationships(self) -> tuple[ConflictRecord, ...]:
         return tuple(self._relationships)
+
+    def restore(
+        self,
+        decisions: tuple[Decision, ...],
+        relationships: tuple[ConflictRecord, ...],
+    ) -> None:
+        """Restore ledger history without replaying semantic operations."""
+
+        if len({item.decision_id for item in decisions}) != len(decisions):
+            raise ValueError("Decision identifiers must be unique")
+        self._decisions = {item.decision_id: item for item in decisions}
+        self._relationships = list(relationships)
 
     def get(self, decision_id: str) -> Decision:
         try:
@@ -119,23 +150,40 @@ class DecisionLedger:
     def register(self, decision: Decision) -> Decision:
         if decision.decision_id in self._decisions:
             raise ValueError(f"Decision already exists: {decision.decision_id}")
-        if not decision.trace_refs:
-            raise ValueError("Authoritative decisions require synthesis provenance")
-        self._decisions[decision.decision_id] = decision
-        decision.trace_refs.append(
-            self.trace.record(
-                TraceAction.REGISTER_DECISION,
-                "decision",
-                decision.decision_id,
-                canonical_rule=decision.canonical_rule,
-                authoritative_value=list(decision.authoritative_value),
-                source_round=decision.source_round,
-                source_question=decision.source_question,
-            )
+        self.trace.validate_decision_synthesis(decision)
+        trace_id = self.trace.record(
+            TraceAction.REGISTER_DECISION,
+            "decision",
+            decision.decision_id,
+            canonical_rule=decision.canonical_rule,
+            authoritative_value=list(decision.authoritative_value),
+            source_round=decision.source_round,
+            source_question=decision.source_question,
         )
-        return decision
+        registered = replace(decision, trace_refs=(*decision.trace_refs, trace_id))
+        self._decisions[decision.decision_id] = registered
+        return registered
+
+    def add_supersession_listener(self, listener: SupersessionListener) -> None:
+        self._supersession_listeners.append(listener)
 
     def record_relationship(
+        self,
+        earlier_decision: str,
+        later_decision: str,
+        relation: ConflictRelation,
+        notes: str,
+    ) -> ConflictRecord:
+        if relation is ConflictRelation.SUPERSEDES:
+            raise ValueError("SUPERSEDES relationships must be created through supersede()")
+        return self._append_relationship(
+            earlier_decision,
+            later_decision,
+            relation,
+            notes,
+        )
+
+    def _append_relationship(
         self,
         earlier_decision: str,
         later_decision: str,
@@ -156,11 +204,35 @@ class DecisionLedger:
     def supersede(self, earlier_decision: str, later_decision: str, *, notes: str) -> None:
         earlier = self.get(earlier_decision)
         later = self.get(later_decision)
+        if earlier_decision == later_decision:
+            raise ValueError("A decision cannot supersede itself")
         if earlier.status is DecisionStatus.SUPERSEDED:
             raise ValueError(f"Decision is already superseded: {earlier_decision}")
-        earlier.status = DecisionStatus.SUPERSEDED
-        later.supersedes = tuple(dict.fromkeys((*later.supersedes, earlier_decision)))
-        self.record_relationship(
+        if any(
+            relation.relation is ConflictRelation.SUPERSEDES
+            and relation.earlier_decision == earlier_decision
+            and relation.later_decision == later_decision
+            for relation in self._relationships
+        ):
+            raise ValueError(
+                f"Supersession relationship already exists: {earlier_decision} -> {later_decision}"
+            )
+        if later_decision in self._supersession_ancestors(earlier_decision):
+            raise ValueError(
+                f"Supersession would create a cycle: {earlier_decision} -> {later_decision}"
+            )
+        eligible = {
+            DecisionStatus.SYNTHESIZED,
+            DecisionStatus.TESTED,
+            DecisionStatus.RATIFIED,
+            DecisionStatus.UNRESOLVED,
+        }
+        if later.status not in eligible:
+            raise ValueError(
+                f"Replacement decision is not current/eligible: {later_decision}"
+            )
+        self.trace.validate_registered_decision(later)
+        self._append_relationship(
             earlier_decision,
             later_decision,
             ConflictRelation.SUPERSEDES,
@@ -173,8 +245,39 @@ class DecisionLedger:
             replaced_by=later_decision,
             notes=notes,
         )
-        earlier.trace_refs.append(trace_id)
-        later.trace_refs.append(trace_id)
+        earlier = replace(
+            earlier,
+            status=DecisionStatus.SUPERSEDED,
+            trace_refs=(*earlier.trace_refs, trace_id),
+        )
+        later = replace(
+            later,
+            supersedes=tuple(
+                dict.fromkeys((*later.supersedes, *earlier.supersedes, earlier_decision))
+            ),
+            trace_refs=(*later.trace_refs, trace_id),
+        )
+        self._decisions[earlier_decision] = earlier
+        self._decisions[later_decision] = later
+        for listener in self._supersession_listeners:
+            listener(earlier, later)
+
+    def _supersession_ancestors(self, decision_id: str) -> set[str]:
+        """Return transitive historical predecessors for cycle detection."""
+
+        ancestors: set[str] = set()
+        pending = [decision_id]
+        while pending:
+            current = pending.pop()
+            for relation in self._relationships:
+                if (
+                    relation.relation is ConflictRelation.SUPERSEDES
+                    and relation.later_decision == current
+                    and relation.earlier_decision not in ancestors
+                ):
+                    ancestors.add(relation.earlier_decision)
+                    pending.append(relation.earlier_decision)
+        return ancestors
 
 
 class CurrentStateCompiler:
@@ -187,8 +290,7 @@ class CurrentStateCompiler:
             if decision.status is not DecisionStatus.SUPERSEDED
         )
         for decision in active:
-            if not decision.trace_refs:
-                raise ValueError(f"Decision lacks provenance: {decision.decision_id}")
+            ledger.trace.validate_decision_synthesis(decision)
 
         unresolved: list[str] = list(project.unresolved_areas)
         for decision in active:

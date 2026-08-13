@@ -33,15 +33,16 @@ class OwnerAuthorityTests(unittest.TestCase):
         )
 
         workspace.record_owner_answer("round-1", "question-1", "B")
+        question = workspace.rounds.get("round-1").question("question-1")
         decision = workspace.synthesize_decision(
             "round-1",
             "question-1",
             decision_id="decision-1",
             scope="targeting",
-            rule_builder=lambda answer: {
+            rule_mapping={
                 "A": "Movement targets an actor.",
                 "B": "Movement targets a position.",
-            }[answer.normalized_value[0]],
+            },
         )
         state = workspace.state_compiler.compile(workspace.project, workspace.ledger)
 

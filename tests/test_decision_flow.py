@@ -56,7 +56,9 @@ class DecisionFlowTests(unittest.TestCase):
             "question-3",
             decision_id="decision-qualified",
             scope="mode-selection",
-            rule_builder=lambda owner: f"Modes {' and '.join(owner.normalized_value)} apply conditionally.",
+            rule_mapping={
+                ("A", "C"): "Modes A and C apply conditionally.",
+            },
         )
 
         self.assertEqual(answer.normalized_value, recorded.normalized_value)

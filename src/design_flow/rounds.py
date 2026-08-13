@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
+from dataclasses import replace
 
 from .model import (
+    Decision,
     DecisionStatus,
     DesignRound,
     OwnerAnswer,
@@ -69,28 +72,45 @@ def parse_owner_answer(
 
 
 class RoundManager:
-    def __init__(self, project: Project, trace: TraceLog) -> None:
+    def __init__(
+        self,
+        project: Project,
+        trace: TraceLog,
+        registered_decisions: Callable[[], tuple[Decision, ...]],
+    ) -> None:
         self.project = project
         self.trace = trace
+        self._registered_decisions = registered_decisions
         self._rounds: dict[str, DesignRound] = {}
 
     @property
     def rounds(self) -> tuple[DesignRound, ...]:
         return tuple(self._rounds.values())
 
+    def restore(self, rounds: tuple[DesignRound, ...]) -> None:
+        """Restore authoritative round history without emitting TRACE."""
+
+        if len({item.round_id for item in rounds}) != len(rounds):
+            raise ValueError("Round identifiers must be unique")
+        self._rounds = {item.round_id: item for item in rounds}
+
     def register_round(self, design_round: DesignRound) -> DesignRound:
         if design_round.round_id in self._rounds:
             raise ValueError(f"Round already exists: {design_round.round_id}")
-        self._rounds[design_round.round_id] = design_round
         trace_id = self.trace.record(
             TraceAction.REGISTER_ROUND,
             "round",
             design_round.round_id,
             topic=design_round.topic,
+            purpose=design_round.purpose,
+            prerequisites=list(design_round.prerequisites),
             mode=self.project.current_mode.value,
         )
-        design_round.trace_refs.append(trace_id)
-        return design_round
+        registered = replace(
+            design_round, trace_refs=(*design_round.trace_refs, trace_id)
+        )
+        self._rounds[design_round.round_id] = registered
+        return registered
 
     def get(self, round_id: str) -> DesignRound:
         try:
@@ -102,30 +122,38 @@ class RoundManager:
         design_round = self.get(round_id)
         if any(item.question_id == question.question_id for item in design_round.questions):
             raise ValueError(f"Question already exists: {question.question_id}")
-        design_round.questions.append(question)
-        question.trace_refs.append(
+        trace_refs = (
             self.trace.record(
                 TraceAction.REGISTER_QUESTION,
                 "question",
                 question.question_id,
                 round_id=round_id,
                 question_type=question.question_type.value,
-            )
-        )
-        question.trace_refs.append(
+                question_text=question.text,
+                options=[(option.key, option.label) for option in question.options],
+            ),
             self.trace.record(
                 TraceAction.RECOMMEND,
                 "question",
                 question.question_id,
                 proposed_answer=list(question.recommendation.proposed_answer),
                 reason=question.recommendation.reason,
-            )
+                status=question.recommendation.status.value,
+            ),
         )
-        return question
+        registered = replace(question, trace_refs=trace_refs)
+        self._rounds[round_id] = replace(
+            design_round, questions=(*design_round.questions, registered)
+        )
+        return registered
 
     def record_owner_answer(self, round_id: str, question_id: str, raw_value: str) -> OwnerAnswer:
         design_round = self.get(round_id)
         question = design_round.question(question_id)
+        if question.owner_answer is not None:
+            raise ValueError(
+                "Owner answer history is immutable; edit a draft or create a superseding decision"
+            )
         answer = parse_owner_answer(
             raw_value,
             allowed_values=question.option_keys,
@@ -137,10 +165,8 @@ class RoundManager:
                 else None
             ),
         )
-        question.owner_answer = answer
-        question.answer_status = answer.status
-        design_round.owner_answer_set[question_id] = answer
-        question.trace_refs.append(
+        trace_refs = (
+            *question.trace_refs,
             self.trace.record(
                 TraceAction.OWNER_SELECT,
                 "question",
@@ -149,25 +175,67 @@ class RoundManager:
                 normalized_value=list(answer.normalized_value),
                 qualifiers=list(answer.qualifiers),
                 status=answer.status.value,
-            )
+            ),
         )
+        implications = question.derived_implications
+        unresolved = design_round.unresolved
 
         if answer.status is DecisionStatus.UNRESOLVED:
             follow_up = self._follow_up_for(answer)
-            if follow_up not in design_round.unresolved:
-                design_round.unresolved.append(follow_up)
-            question.derived_implications.append(follow_up)
-            question.trace_refs.append(
+            if follow_up not in unresolved:
+                unresolved = (*unresolved, follow_up)
+            implications = (*implications, follow_up)
+            trace_refs = (
+                *trace_refs,
                 self.trace.record(
                     TraceAction.MARK_UNRESOLVED,
                     "question",
                     question_id,
                     follow_up=follow_up,
-                )
+                ),
             )
-
-        self._refresh_round_status(design_round)
+        updated_question = replace(
+            question,
+            owner_answer=answer,
+            answer_status=answer.status,
+            derived_implications=implications,
+            trace_refs=trace_refs,
+        )
+        answers = dict(design_round.owner_answer_set)
+        answers[question_id] = answer
+        questions = tuple(
+            updated_question if item.question_id == question_id else item
+            for item in design_round.questions
+        )
+        updated_round = replace(
+            design_round,
+            questions=questions,
+            owner_answer_set=answers,
+            unresolved=unresolved,
+        )
+        updated_round = replace(updated_round, status=self._round_status(updated_round))
+        self._rounds[round_id] = updated_round
         return answer
+
+    def _synchronize_decision_history(self, round_id: str) -> DesignRound:
+        """Derive committed synthesis solely from registered ledger decisions."""
+
+        design_round = self.get(round_id)
+        sourced = tuple(
+            decision
+            for decision in self._registered_decisions()
+            if decision.source_round == round_id
+        )
+        for decision in sourced:
+            self.trace.validate_registered_decision(decision)
+        canonical_rules = tuple(decision.canonical_rule for decision in sourced)
+        updated = replace(
+            design_round,
+            synthesis=canonical_rules,
+            derived_rules=canonical_rules,
+        )
+        self._rounds[round_id] = updated
+        return updated
 
     def record_owner_answers(self, round_id: str, compact_answers: str) -> dict[str, OwnerAnswer]:
         """Record strings such as ``1B, 2A, 3 Yes`` by question order."""
@@ -196,10 +264,9 @@ class RoundManager:
         return f"Clarify the owner answer for {answer.source_question}."
 
     @staticmethod
-    def _refresh_round_status(design_round: DesignRound) -> None:
+    def _round_status(design_round: DesignRound) -> DecisionStatus:
         if not design_round.questions or len(design_round.owner_answer_set) < len(design_round.questions):
-            design_round.status = DecisionStatus.OPEN
+            return DecisionStatus.OPEN
         elif any(answer.status is DecisionStatus.UNRESOLVED for answer in design_round.owner_answer_set.values()):
-            design_round.status = DecisionStatus.UNRESOLVED
-        else:
-            design_round.status = DecisionStatus.OWNER_SELECTED
+            return DecisionStatus.UNRESOLVED
+        return DecisionStatus.OWNER_SELECTED

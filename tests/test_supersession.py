@@ -54,7 +54,7 @@ class SupersessionTests(unittest.TestCase):
                 question_id,
                 decision_id=f"decision-{suffix}",
                 scope="movement-targeting",
-                rule_builder=lambda owner, choices=rules: choices[owner.normalized_value[0]],
+                rule_mapping=rules,
             )
 
         workspace.ledger.supersede(
