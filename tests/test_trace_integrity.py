@@ -1,4 +1,5 @@
 import unittest
+from dataclasses import replace
 
 from design_flow import (
     Decision,
@@ -96,7 +97,7 @@ class TraceIntegrityTests(unittest.TestCase):
             scope="integrity",
             rule_mapping={"A": "The first rule applies.", "B": "The second rule applies."},
         )
-        decision.authoritative_value = ("A",)
+        decision = replace(decision, authoritative_value=("A",))
         with self.assertRaisesRegex(ValueError, "authoritative value"):
             workspace.ledger.register(decision)
 
@@ -109,7 +110,7 @@ class TraceIntegrityTests(unittest.TestCase):
             scope="integrity",
             rule_mapping={"A": "The first rule applies.", "B": "The second rule applies."},
         )
-        decision.canonical_rule = "The first rule applies."
+        decision = replace(decision, canonical_rule="The first rule applies.")
         with self.assertRaisesRegex(ValueError, "canonical_rule"):
             workspace.ledger.register(decision)
 

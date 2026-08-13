@@ -55,7 +55,7 @@ Decision registration rejects state unless an actual local `SYNTHESIZE` record m
 
 ## Ledger and Current State
 
-The decision ledger answers, “How did we arrive here?” It retains each recommendation, reason, raw owner answer, normalized owner value, qualifiers, synthesis, relationship, and TRACE reference.
+The decision ledger answers, “How did we arrive here?” It retains each recommendation, reason, raw owner answer, normalized owner value, qualifiers, synthesis, relationship, and TRACE reference. Decisions are immutable snapshots: the ledger performs registration and supersession by replacing its stored records, and ledger/current-state accessors expose no writable decision state.
 
 The current-state compiler answers, “What has actually been decided now?” It includes every operative decision except those marked `SUPERSEDED`. Each output decision retains its source round and question.
 
@@ -93,7 +93,7 @@ The ledger supports explicit relations:
 - `supersedes`
 - `unresolved_conflict`
 
-There is no universal contradiction solver. A caller or owner declares a relationship. Supersession rejects self-links, ineligible replacements, duplicate edges, and cycles before mutation. Valid chains retain transitive predecessor identity. When supersession is authorized, the ledger marks the earlier decision `SUPERSEDED`, points the newer decision back to it, retains both records, and appends a TRACE event.
+There is no universal contradiction solver. A caller or owner declares a relationship. `SUPERSEDES` is reserved to the guarded `supersede()` operation; other declared relationship kinds remain directly recordable. Supersession rejects self-links, ineligible replacements, duplicate edges, and cycles before mutation. Valid chains retain transitive predecessor identity. When supersession is authorized, the ledger marks the earlier decision `SUPERSEDED`, points the newer decision back to it, retains both records, and appends a TRACE event.
 
 The workspace wires supersession to the concept registry. Any settled concept sourced from the replaced decision moves out of current state and into affected/unresolved state. The owner or caller must explicitly revise, deprecate, or retain it as unresolved. The system does not guess which semantic repair is correct.
 
@@ -105,7 +105,7 @@ Implemented actions include project, round, and question registration; recommend
 
 No authoritative decision may be accepted without a matching synthesis record in the actual local TRACE. Concept sources additionally require a matching ledger-registration event. A fake ID, wrong action, wrong entity, mismatched owner value, or synthesized-but-unregistered concept source is rejected.
 
-Each TRACE record is a recursively immutable snapshot. Recording copies caller-owned container structure, so history cannot be rewritten through an accessor or a retained external alias.
+Each TRACE record is a recursively immutable snapshot. TRACE admits primitive scalar values, safely normalized enums, and supported mapping/sequence/set containers that can be recursively frozen. Recording copies caller-owned container structure; unsupported custom values and cyclic containers are rejected, so history cannot be rewritten through an accessor or retained external alias.
 
 ## Core Concepts
 

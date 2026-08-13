@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 
 from .model import (
@@ -15,6 +16,9 @@ from .model import (
 from .trace import TraceLog
 
 
+DecisionResolver = Callable[[str], Decision]
+
+
 class CoreConceptRegistry:
     """Mutation-controlled current, affected, and historical concept state.
 
@@ -22,8 +26,13 @@ class CoreConceptRegistry:
     canonical DesignFlowWorkspace establishes that cross-module invariant.
     """
 
-    def __init__(self, trace: TraceLog) -> None:
+    def __init__(
+        self,
+        trace: TraceLog,
+        decision_resolver: DecisionResolver | None = None,
+    ) -> None:
         self.trace = trace
+        self._decision_resolver = decision_resolver
         self._current: dict[str, CoreConcept] = {}
         self._affected: dict[str, CoreConcept] = {}
         self._history: list[CoreConcept] = []
@@ -70,7 +79,7 @@ class CoreConceptRegistry:
     ) -> CoreConcept:
         if concept_id in self._current or concept_id in self._affected:
             raise ValueError(f"Concept already exists: {concept_id}")
-        self._validate_source_decision(decision)
+        decision = self._validate_source_decision(decision)
 
         status = (
             ConceptStatus.UNRESOLVED
@@ -167,7 +176,7 @@ class CoreConceptRegistry:
     ) -> CoreConcept:
         """Replace a concept with a new immutable version and preserve history."""
 
-        self._validate_source_decision(source_decision)
+        source_decision = self._validate_source_decision(source_decision)
         prior = self.get(concept_id)
         self._history.append(replace(prior, status=ConceptStatus.SUPERSEDED))
 
@@ -239,7 +248,13 @@ class CoreConceptRegistry:
         self._history.append(historical)
         return historical
 
-    def _validate_source_decision(self, decision: Decision) -> None:
+    def _validate_source_decision(self, decision: Decision) -> Decision:
+        self.trace.validate_registered_decision(decision)
+        if self._decision_resolver is not None:
+            try:
+                decision = self._decision_resolver(decision.decision_id)
+            except KeyError:
+                pass
         if decision.status not in {
             DecisionStatus.SYNTHESIZED,
             DecisionStatus.TESTED,
@@ -248,6 +263,7 @@ class CoreConceptRegistry:
         }:
             raise ValueError("Concepts require a current synthesized or unresolved decision")
         self.trace.validate_registered_decision(decision)
+        return decision
 
     def _initial_provenance(self, decision: Decision) -> dict[str, object]:
         source = self._source_provenance(decision)

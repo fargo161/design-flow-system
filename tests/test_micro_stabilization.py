@@ -41,6 +41,49 @@ def assert_concept_is_immutable(test: unittest.TestCase, concept) -> None:
         concept.provenance["current_source"]["source_decision"] = "forged"
 
 
+def assert_decision_is_immutable(test: unittest.TestCase, decision) -> None:
+    assignments = (
+        ("status", DecisionStatus.SUPERSEDED),
+        ("canonical_rule", "forged rule"),
+        ("authoritative_value", ("A",)),
+        ("supersedes", ("forged",)),
+        ("trace_refs", ("forged",)),
+    )
+    for field, value in assignments:
+        with test.subTest(field=field):
+            with test.assertRaises((FrozenInstanceError, AttributeError)):
+                setattr(decision, field, value)
+
+
+class DecisionImmutabilityTests(unittest.TestCase):
+    def test_ledger_and_current_state_accessors_expose_immutable_snapshots(self) -> None:
+        workspace = make_workspace("decision-immutability")
+        registered = add_decision(
+            workspace, suffix="current", recommendation="A", answer="B"
+        )
+        state = workspace.state_compiler.compile(workspace.project, workspace.ledger)
+        trace_count = len(workspace.trace)
+
+        for decision in (
+            registered,
+            workspace.ledger.get("decision-current"),
+            workspace.ledger.decisions[0],
+            state.decisions[0],
+        ):
+            assert_decision_is_immutable(self, decision)
+
+        stored = workspace.ledger.get("decision-current")
+        self.assertEqual(DecisionStatus.SYNTHESIZED, stored.status)
+        self.assertEqual(("B",), stored.authoritative_value)
+        self.assertEqual((), stored.supersedes)
+        self.assertEqual(trace_count, len(workspace.trace))
+        self.assertFalse(
+            any(record.action is TraceAction.SUPERSEDE for record in workspace.trace.records)
+        )
+        current = workspace.state_compiler.compile(workspace.project, workspace.ledger)
+        self.assertEqual(("decision-current",), tuple(item.decision_id for item in current.decisions))
+
+
 class ConceptImmutabilityTests(unittest.TestCase):
     def test_current_affected_and_historical_accessors_expose_immutable_records(self) -> None:
         workspace = make_workspace("concept-immutability")
@@ -114,6 +157,60 @@ class TraceImmutabilityTests(unittest.TestCase):
                 item.details["payload"]["values"] = ("A",)
         self.assertEqual(("B",), workspace.trace.get(trace_id).details["payload"]["values"])
 
+    def test_unsupported_mutable_payloads_are_rejected_without_trace_append(self) -> None:
+        class MutablePayload:
+            def __init__(self) -> None:
+                self.value = "mutable"
+
+        workspace = make_workspace("trace-admission-rejection")
+        initial_count = len(workspace.trace)
+        with self.assertRaisesRegex(TypeError, "Unsupported semantic value type"):
+            workspace.trace.record(
+                TraceAction.GENERATE_DOCUMENT,
+                "document",
+                "custom-payload",
+                payload=MutablePayload(),
+            )
+        with self.assertRaisesRegex(TypeError, "Unsupported semantic value type"):
+            workspace.trace.record(
+                TraceAction.GENERATE_DOCUMENT,
+                "document",
+                "nested-custom-payload",
+                payload={"nested": MutablePayload()},
+            )
+        cyclic: list[object] = []
+        cyclic.append(cyclic)
+        with self.assertRaisesRegex(TypeError, "Cyclic semantic containers"):
+            workspace.trace.record(
+                TraceAction.GENERATE_DOCUMENT,
+                "document",
+                "cyclic-payload",
+                payload=cyclic,
+            )
+        self.assertEqual(initial_count, len(workspace.trace))
+
+    def test_safe_trace_payload_families_are_normalized_and_accepted(self) -> None:
+        workspace = make_workspace("trace-admission-safe")
+        trace_id = workspace.trace.record(
+            TraceAction.GENERATE_DOCUMENT,
+            "document",
+            "safe-payload",
+            text="value",
+            enabled=True,
+            count=3,
+            optional=None,
+            sequence=["A", "B"],
+            mapping={"answer": ["B"]},
+            choices={"A", "B"},
+            status=DecisionStatus.SYNTHESIZED,
+        )
+
+        details = workspace.trace.get(trace_id).details
+        self.assertEqual(("A", "B"), details["sequence"])
+        self.assertEqual(("B",), details["mapping"]["answer"])
+        self.assertEqual(frozenset({"A", "B"}), details["choices"])
+        self.assertEqual("SYNTHESIZED", details["status"])
+
 
 class SupersessionSafetyTests(unittest.TestCase):
     def test_self_supersession_is_rejected_without_state_change(self) -> None:
@@ -132,25 +229,61 @@ class SupersessionSafetyTests(unittest.TestCase):
         workspace.ledger.supersede("decision-a", "decision-b", notes="A to B.")
         with self.assertRaisesRegex(ValueError, "not current/eligible"):
             workspace.ledger.supersede("decision-c", "decision-a", notes="Invalid.")
-        self.assertEqual(DecisionStatus.SUPERSEDED, a.status)
+        self.assertEqual(
+            DecisionStatus.SUPERSEDED,
+            workspace.ledger.get("decision-a").status,
+        )
         self.assertEqual(DecisionStatus.SYNTHESIZED, workspace.ledger.get("decision-c").status)
 
-    def test_preexisting_supersession_relation_is_not_duplicated(self) -> None:
-        workspace = make_workspace("duplicate-relation")
+    def test_supersedes_is_reserved_but_other_relationships_and_guarded_path_work(self) -> None:
+        workspace = make_workspace("guarded-relation")
         a = add_decision(workspace, suffix="a", recommendation="B", answer="A")
         b = add_decision(workspace, suffix="b", recommendation="A", answer="B")
-        workspace.ledger.record_relationship(
-            "decision-a",
-            "decision-b",
-            ConflictRelation.SUPERSEDES,
-            "Pre-existing relation.",
-        )
+        trace_count = len(workspace.trace)
 
-        with self.assertRaisesRegex(ValueError, "already exists"):
-            workspace.ledger.supersede("decision-a", "decision-b", notes="Duplicate.")
+        with self.assertRaisesRegex(ValueError, "must be created through supersede"):
+            workspace.ledger.record_relationship(
+                "decision-a",
+                "decision-b",
+                ConflictRelation.SUPERSEDES,
+                "Bypass attempt.",
+            )
         self.assertEqual(DecisionStatus.SYNTHESIZED, a.status)
         self.assertEqual(DecisionStatus.SYNTHESIZED, b.status)
-        self.assertEqual(1, len(workspace.ledger.relationships))
+        self.assertEqual((), workspace.ledger.relationships)
+        self.assertEqual(trace_count, len(workspace.trace))
+
+        conflict = workspace.ledger.record_relationship(
+            "decision-a",
+            "decision-b",
+            ConflictRelation.POTENTIAL_CONFLICT,
+            "Review required.",
+        )
+        self.assertEqual(ConflictRelation.POTENTIAL_CONFLICT, conflict.relation)
+
+        workspace.ledger.supersede("decision-a", "decision-b", notes="Guarded path.")
+        self.assertEqual(
+            DecisionStatus.SUPERSEDED,
+            workspace.ledger.get("decision-a").status,
+        )
+        self.assertEqual(("decision-a",), workspace.ledger.get("decision-b").supersedes)
+        self.assertEqual(
+            (ConflictRelation.POTENTIAL_CONFLICT, ConflictRelation.SUPERSEDES),
+            tuple(item.relation for item in workspace.ledger.relationships),
+        )
+        self.assertEqual(trace_count + 1, len(workspace.trace))
+        self.assertEqual(TraceAction.SUPERSEDE, workspace.trace.records[-1].action)
+        with self.assertRaisesRegex(ValueError, "current synthesized"):
+            workspace.register_concept_from_decision(
+                a,
+                concept_id="stale-source",
+                canonical_name="STALE_SOURCE",
+                definition=a.canonical_rule,
+            )
+        relationship_count = len(workspace.ledger.relationships)
+        with self.assertRaisesRegex(ValueError, "already superseded"):
+            workspace.ledger.supersede("decision-a", "decision-b", notes="Duplicate.")
+        self.assertEqual(relationship_count, len(workspace.ledger.relationships))
 
     def test_cycle_attempt_is_rejected(self) -> None:
         workspace = make_workspace("cycle")
@@ -160,9 +293,6 @@ class SupersessionSafetyTests(unittest.TestCase):
         workspace.ledger.supersede("decision-a", "decision-b", notes="A to B.")
         workspace.ledger.supersede("decision-b", "decision-c", notes="B to C.")
 
-        # Restore the historical candidate only to reach the explicit ancestry guard;
-        # ordinary use is already rejected by the ineligible-replacement guard.
-        workspace.ledger.get("decision-a").status = DecisionStatus.SYNTHESIZED
         with self.assertRaisesRegex(ValueError, "create a cycle"):
             workspace.ledger.supersede("decision-c", "decision-a", notes="C to A.")
         self.assertEqual(DecisionStatus.SYNTHESIZED, workspace.ledger.get("decision-c").status)
@@ -188,9 +318,18 @@ class SupersessionSafetyTests(unittest.TestCase):
         )
         workspace.ledger.supersede("decision-b", "decision-c", notes="B to C.")
 
-        self.assertEqual(DecisionStatus.SUPERSEDED, a.status)
-        self.assertEqual(DecisionStatus.SUPERSEDED, b.status)
-        self.assertEqual(DecisionStatus.SYNTHESIZED, c.status)
+        self.assertEqual(
+            DecisionStatus.SUPERSEDED,
+            workspace.ledger.get("decision-a").status,
+        )
+        self.assertEqual(
+            DecisionStatus.SUPERSEDED,
+            workspace.ledger.get("decision-b").status,
+        )
+        self.assertEqual(
+            DecisionStatus.SYNTHESIZED,
+            workspace.ledger.get("decision-c").status,
+        )
         self.assertEqual(
             ("decision-a", "decision-b", "decision-c"),
             tuple(item.decision_id for item in workspace.ledger.decisions),
@@ -199,7 +338,10 @@ class SupersessionSafetyTests(unittest.TestCase):
         self.assertEqual(("decision-c",), tuple(item.decision_id for item in state.decisions))
         self.assertEqual((), workspace.concepts.concepts)
         self.assertEqual(("concept",), tuple(item.concept_id for item in workspace.concepts.affected))
-        self.assertEqual(("decision-a", "decision-b"), c.supersedes)
+        self.assertEqual(
+            ("decision-a", "decision-b"),
+            workspace.ledger.get("decision-c").supersedes,
+        )
         first = workspace.render_application_document()
         second = workspace.render_application_document()
         self.assertEqual(first, second)

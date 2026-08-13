@@ -7,23 +7,79 @@ derived decisions, concepts, and rendered documents as distinct layers.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import StrEnum
+from enum import Enum, StrEnum
 from types import MappingProxyType
 from typing import Any, Mapping
 
 
 def freeze_semantic_value(value: Any) -> Any:
-    """Recursively snapshot supported containers into immutable equivalents."""
+    """Snapshot admitted semantic values or reject unsafe mutable aliases."""
 
+    return _freeze_semantic_value(value, active_containers=set())
+
+
+def _freeze_semantic_value(value: Any, *, active_containers: set[int]) -> Any:
+    if isinstance(value, Enum):
+        return _freeze_semantic_value(value.value, active_containers=active_containers)
+    if value is None or type(value) in (bool, int, float, str):
+        return value
     if isinstance(value, Mapping):
-        return MappingProxyType(
-            {key: freeze_semantic_value(item) for key, item in value.items()}
-        )
+        return _freeze_mapping(value, active_containers=active_containers)
     if isinstance(value, (list, tuple)):
-        return tuple(freeze_semantic_value(item) for item in value)
+        return _freeze_sequence(value, active_containers=active_containers)
     if isinstance(value, (set, frozenset)):
-        return frozenset(freeze_semantic_value(item) for item in value)
-    return value
+        return _freeze_set(value, active_containers=active_containers)
+    raise TypeError(
+        f"Unsupported semantic value type: {type(value).__module__}.{type(value).__qualname__}"
+    )
+
+
+def _enter_container(value: Any, active_containers: set[int]) -> int:
+    identity = id(value)
+    if identity in active_containers:
+        raise TypeError("Cyclic semantic containers are not supported")
+    active_containers.add(identity)
+    return identity
+
+
+def _freeze_mapping(value: Mapping[Any, Any], *, active_containers: set[int]) -> Mapping[Any, Any]:
+    identity = _enter_container(value, active_containers)
+    try:
+        frozen: dict[Any, Any] = {}
+        for key, item in value.items():
+            frozen_key = _freeze_semantic_value(key, active_containers=active_containers)
+            try:
+                hash(frozen_key)
+            except TypeError as error:
+                raise TypeError("Semantic mapping keys must freeze to hashable values") from error
+            frozen[frozen_key] = _freeze_semantic_value(
+                item, active_containers=active_containers
+            )
+        return MappingProxyType(frozen)
+    finally:
+        active_containers.remove(identity)
+
+
+def _freeze_sequence(value: list[Any] | tuple[Any, ...], *, active_containers: set[int]) -> tuple[Any, ...]:
+    identity = _enter_container(value, active_containers)
+    try:
+        return tuple(
+            _freeze_semantic_value(item, active_containers=active_containers)
+            for item in value
+        )
+    finally:
+        active_containers.remove(identity)
+
+
+def _freeze_set(value: set[Any] | frozenset[Any], *, active_containers: set[int]) -> frozenset[Any]:
+    identity = _enter_container(value, active_containers)
+    try:
+        return frozenset(
+            _freeze_semantic_value(item, active_containers=active_containers)
+            for item in value
+        )
+    finally:
+        active_containers.remove(identity)
 
 
 class DesignFlowMode(StrEnum):
@@ -201,9 +257,38 @@ class DecisionProvenance:
     options: tuple[QuestionOption, ...] = ()
     rule_source_value: tuple[str, ...] = ()
 
+    def __post_init__(self) -> None:
+        for field_name in (
+            "recommendation_was",
+            "owner_normalized_value",
+            "owner_qualifiers",
+            "options",
+            "rule_source_value",
+        ):
+            object.__setattr__(self, field_name, tuple(getattr(self, field_name)))
+        for field_name in (
+            "recommendation_reason",
+            "owner_raw_value",
+            "question_text",
+        ):
+            if type(getattr(self, field_name)) is not str:
+                raise TypeError(f"Decision provenance {field_name} must be a string")
+        for field_name in (
+            "recommendation_was",
+            "owner_normalized_value",
+            "owner_qualifiers",
+            "rule_source_value",
+        ):
+            if any(type(item) is not str for item in getattr(self, field_name)):
+                raise TypeError(f"Decision provenance {field_name} must contain only strings")
+        if any(not isinstance(item, QuestionOption) for item in self.options):
+            raise TypeError("Decision provenance options must contain QuestionOption records")
 
-@dataclass(slots=True)
+
+@dataclass(slots=True, frozen=True)
 class Decision:
+    """Immutable authoritative decision snapshot owned by the decision ledger."""
+
     decision_id: str
     canonical_rule: str
     authoritative_value: tuple[str, ...]
@@ -215,7 +300,39 @@ class Decision:
     dependencies: tuple[str, ...] = ()
     supersedes: tuple[str, ...] = ()
     unresolved_consequences: tuple[str, ...] = ()
-    trace_refs: list[str] = field(default_factory=list)
+    trace_refs: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "authoritative_value",
+            "dependencies",
+            "supersedes",
+            "unresolved_consequences",
+            "trace_refs",
+        ):
+            object.__setattr__(self, field_name, tuple(getattr(self, field_name)))
+        for field_name in (
+            "decision_id",
+            "canonical_rule",
+            "scope",
+            "source_round",
+            "source_question",
+        ):
+            if type(getattr(self, field_name)) is not str:
+                raise TypeError(f"Decision {field_name} must be a string")
+        for field_name in (
+            "authoritative_value",
+            "dependencies",
+            "supersedes",
+            "unresolved_consequences",
+            "trace_refs",
+        ):
+            if any(type(item) is not str for item in getattr(self, field_name)):
+                raise TypeError(f"Decision {field_name} must contain only strings")
+        if not isinstance(self.status, DecisionStatus):
+            raise TypeError("Decision status must be a DecisionStatus")
+        if not isinstance(self.provenance, DecisionProvenance):
+            raise TypeError("Decision provenance must be a DecisionProvenance record")
 
 
 @dataclass(slots=True, frozen=True)

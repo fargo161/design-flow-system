@@ -131,7 +131,7 @@ DECISION SYNTHESIS
 
 ## Decision Provenance Model
 
-The ledger stores the source round and question, historical recommendation and reason, raw owner input, normalized owner value, qualifiers, declared owner-value-to-rule source, synthesized rule, scope, dependencies, unresolved consequences, supersession links, and TRACE references.
+The ledger stores the source round and question, historical recommendation and reason, raw owner input, normalized owner value, qualifiers, declared owner-value-to-rule source, synthesized rule, scope, dependencies, unresolved consequences, supersession links, and TRACE references. Authoritative decisions are immutable snapshots; registration and supersession replace ledger-owned records rather than exposing writable semantic state through ledger or current-state accessors.
 
 Registration validates the cited local synthesis record by existence, action, entity type and identity, source round and question, authoritative value, recommendation, canonical rule, and applicable status. A nonempty or fabricated reference is insufficient.
 
@@ -145,7 +145,7 @@ This parser is deliberately bounded to declared option keys. It is not a general
 
 ## Supersession Model
 
-Supersession is explicit and acyclic. Self-supersession, replacement by a non-current decision, duplicate edges, and graph-closing cycles are rejected before state changes. A valid chain such as A -> B -> C retains its ordered ancestry. The old decision becomes `SUPERSEDED`; the new decision records what it replaces; a `supersedes` relationship and TRACE entry are appended; and current decision state uses the new rule. Any settled concept sourced from the old decision is immediately moved into affected/unresolved state. It can return to current state only through an explicit revision, or leave operative state through deprecation. Old decisions and concept versions remain historical.
+Supersession is explicit and acyclic. Self-supersession, replacement by a non-current decision, duplicate edges, and graph-closing cycles are rejected before state changes. `SUPERSEDES` relationships can be created only by the guarded `supersede()` operation; direct relationship registration remains available for the other declared relation kinds. A valid chain such as A -> B -> C retains its ordered ancestry. The old decision becomes `SUPERSEDED`; the new decision records what it replaces; a `supersedes` relationship and TRACE entry are appended; and current decision state uses the new rule. Any settled concept sourced from the old decision is immediately moved into affected/unresolved state. It can return to current state only through an explicit revision, or leave operative state through deprecation. Old decisions and concept versions remain historical.
 
 ## TRACE Model
 
@@ -153,7 +153,7 @@ TRACE records project, round, question, recommendation, owner selection, synthes
 
 No authoritative decision can be accepted without matching synthesis proof in the actual local TRACE. Concept registration and revision additionally require the source decision's ledger-registration event.
 
-TRACE records are immutable snapshots. Their details are recursively frozen, and caller-owned containers are copied on ingress, so neither accessor-returned data nor later mutation of the original input can rewrite history.
+TRACE records are immutable snapshots. Details admit only `None`, primitive booleans/numbers/strings, safely normalized enums, and recursively frozen mappings, lists/tuples, and sets/frozensets. Caller-owned containers are copied on ingress; unsupported custom values and cyclic containers are rejected rather than stored by reference.
 
 ## Core Concepts Document Creator
 

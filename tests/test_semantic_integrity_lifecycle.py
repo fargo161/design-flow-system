@@ -95,7 +95,10 @@ class SemanticIntegrityLifecycleTests(unittest.TestCase):
             notes="The owner replaced the fixed position with current actor position.",
         )
 
-        self.assertEqual(DecisionStatus.SUPERSEDED, old.status)
+        self.assertEqual(
+            DecisionStatus.SUPERSEDED,
+            workspace.ledger.get("decision-old").status,
+        )
         self.assertEqual(("decision-new",), tuple(d.decision_id for d in workspace.state_compiler.compile(workspace.project, workspace.ledger).decisions))
         self.assertEqual((), workspace.concepts.concepts)
         self.assertEqual(("movement.target-model",), tuple(c.concept_id for c in workspace.concepts.affected))

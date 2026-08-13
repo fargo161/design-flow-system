@@ -15,7 +15,7 @@ from .model import (
 
 
 class TraceLog:
-    """Append-only in-memory TRACE with stable sequential identifiers."""
+    """Append-only TRACE admitting only recursively snapshot-safe details."""
 
     def __init__(self) -> None:
         self._records: list[TraceRecord] = []
