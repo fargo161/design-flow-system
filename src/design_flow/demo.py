@@ -58,7 +58,7 @@ def build_demo() -> tuple[DesignFlowWorkspace, str]:
         "question.actor-identity",
         decision_id="decision.movement-target-identity",
         scope="movement-targeting",
-        rule_builder=lambda answer: rules[answer.normalized_value[0]],
+        rule_mapping=rules,
     )
     workspace.register_concept_from_decision(
         decision,
@@ -69,6 +69,7 @@ def build_demo() -> tuple[DesignFlowWorkspace, str]:
         does_not_own=("pathfinding", "movement speed"),
         boundaries=("Only relational movement is in scope.",),
     )
+    workspace.record_application_document_generation()
     markdown = workspace.render_application_document()
     return workspace, markdown
 
@@ -86,7 +87,7 @@ def main() -> None:
     assert "MOVEMENT_TARGET_IDENTITY" in markdown
     assert decision.trace_refs
 
-    print("DESIGN FLOW SYSTEM v0.1 — DETERMINISTIC DEMO")
+    print("DESIGN FLOW SYSTEM v0.1.1 — DETERMINISTIC DEMO")
     print("Recommendation preserved: A")
     print("Owner answer preserved: B")
     print(f"Authoritative decision: {decision.authoritative_value[0]}")

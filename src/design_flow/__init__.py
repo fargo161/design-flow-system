@@ -1,4 +1,4 @@
-"""Public API for the Design Flow System v0.1 foundation."""
+"""Public API for the Design Flow System v0.1.1 stabilized foundation."""
 
 from .concepts import CoreConceptRegistry
 from .decisions import CurrentStateCompiler, DecisionLedger, DecisionSynthesizer
@@ -6,6 +6,8 @@ from .documents import LivingApplicationDocumentRenderer
 from .intake import DesignFlowWorkspace
 from .model import (
     ApplicationBinding,
+    ConceptMaturity,
+    ConceptStatus,
     ConflictRelation,
     CoreConcept,
     CurrentDesignState,
@@ -28,6 +30,8 @@ from .trace import TraceLog
 
 __all__ = [
     "ApplicationBinding",
+    "ConceptMaturity",
+    "ConceptStatus",
     "ConflictRelation",
     "CoreConcept",
     "CoreConceptRegistry",
@@ -55,4 +59,4 @@ __all__ = [
     "parse_owner_answer",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"

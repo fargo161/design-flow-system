@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 from .model import (
     ConflictRecord,
@@ -19,7 +19,9 @@ from .model import (
 from .trace import TraceLog
 
 
-RuleBuilder = Callable[[OwnerAnswer], str]
+RuleKey = str | tuple[str, ...]
+RuleMapping = Mapping[RuleKey, str]
+SupersessionListener = Callable[[Decision, Decision], None]
 
 
 class DecisionSynthesizer:
@@ -35,7 +37,7 @@ class DecisionSynthesizer:
         *,
         decision_id: str,
         scope: str,
-        rule_builder: RuleBuilder,
+        rule_mapping: RuleMapping,
         dependencies: tuple[str, ...] = (),
         unresolved_consequences: tuple[str, ...] = (),
     ) -> Decision:
@@ -44,7 +46,16 @@ class DecisionSynthesizer:
             raise ValueError("A decision cannot be synthesized before the owner answers")
 
         answer = question.owner_answer
-        canonical_rule = rule_builder(answer).strip()
+        rule_key: RuleKey = (
+            answer.normalized_value[0]
+            if len(answer.normalized_value) == 1
+            else answer.normalized_value
+        )
+        if rule_key not in rule_mapping:
+            raise ValueError(
+                f"No canonical rule is declared for authoritative owner value {answer.normalized_value}"
+            )
+        canonical_rule = rule_mapping[rule_key].strip()
         if not canonical_rule:
             raise ValueError("Synthesis must produce a non-empty canonical rule")
 
@@ -65,6 +76,7 @@ class DecisionSynthesizer:
             owner_qualifiers=answer.qualifiers,
             question_text=question.text,
             options=question.options,
+            rule_source_value=answer.normalized_value,
         )
         decision = Decision(
             decision_id=decision_id,
@@ -85,7 +97,9 @@ class DecisionSynthesizer:
             source_round=design_round.round_id,
             source_question=question.question_id,
             authoritative_value=list(answer.normalized_value),
+            rule_source_value=list(answer.normalized_value),
             recommendation_was=list(question.recommendation.proposed_answer),
+            canonical_rule=canonical_rule,
             status=status.value,
         )
         decision.trace_refs.append(trace_id)
@@ -101,6 +115,7 @@ class DecisionLedger:
         self.trace = trace
         self._decisions: dict[str, Decision] = {}
         self._relationships: list[ConflictRecord] = []
+        self._supersession_listeners: list[SupersessionListener] = []
 
     @property
     def decisions(self) -> tuple[Decision, ...]:
@@ -119,8 +134,7 @@ class DecisionLedger:
     def register(self, decision: Decision) -> Decision:
         if decision.decision_id in self._decisions:
             raise ValueError(f"Decision already exists: {decision.decision_id}")
-        if not decision.trace_refs:
-            raise ValueError("Authoritative decisions require synthesis provenance")
+        self.trace.validate_decision_synthesis(decision)
         self._decisions[decision.decision_id] = decision
         decision.trace_refs.append(
             self.trace.record(
@@ -134,6 +148,9 @@ class DecisionLedger:
             )
         )
         return decision
+
+    def add_supersession_listener(self, listener: SupersessionListener) -> None:
+        self._supersession_listeners.append(listener)
 
     def record_relationship(
         self,
@@ -175,6 +192,8 @@ class DecisionLedger:
         )
         earlier.trace_refs.append(trace_id)
         later.trace_refs.append(trace_id)
+        for listener in self._supersession_listeners:
+            listener(earlier, later)
 
 
 class CurrentStateCompiler:
@@ -187,8 +206,7 @@ class CurrentStateCompiler:
             if decision.status is not DecisionStatus.SUPERSEDED
         )
         for decision in active:
-            if not decision.trace_refs:
-                raise ValueError(f"Decision lacks provenance: {decision.decision_id}")
+            ledger.trace.validate_decision_synthesis(decision)
 
         unresolved: list[str] = list(project.unresolved_areas)
         for decision in active:

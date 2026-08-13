@@ -38,10 +38,10 @@ class OwnerAuthorityTests(unittest.TestCase):
             "question-1",
             decision_id="decision-1",
             scope="targeting",
-            rule_builder=lambda answer: {
+            rule_mapping={
                 "A": "Movement targets an actor.",
                 "B": "Movement targets a position.",
-            }[answer.normalized_value[0]],
+            },
         )
         state = workspace.state_compiler.compile(workspace.project, workspace.ledger)
 

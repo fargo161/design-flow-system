@@ -4,7 +4,7 @@
 
 The Design Flow System is a project-agnostic design-governance foundation. It turns bounded questions into owner-authored decisions, compiles operative current state without erasing history, registers persistent core concepts, and renders a living application document.
 
-Version `0.1.0` is a foundation proof. It is not the mature product.
+Version `0.1.1` is a semantically stabilized foundation. It is not the mature product.
 
 ## Design-Flow Unit
 
@@ -36,7 +36,9 @@ ASSISTANT RECOMMENDATION != OWNER DECISION
 
 A recommendation is advisory and remains historically inspectable. Only an owner answer can supply the authoritative value used by synthesis. A decision records both the authoritative value and the recommendation that preceded it.
 
-Synthesis accepts the `OwnerAnswer` object through a rule builder. Decision registration rejects synthesized state without a prior TRACE reference.
+Synthesis selects the canonical rule from a declared mapping keyed by the normalized owner value. A caller cannot silently return the rule for `A` when the authoritative value is `B`. This is bounded consistency, not free-text truth checking.
+
+Decision registration rejects state unless an actual local `SYNTHESIZE` record matches the decision identity, source, owner value, recommendation, canonical rule, and applicable status.
 
 ## Decision Lifecycle
 
@@ -69,7 +71,7 @@ The compiler is a view over the ledger. It does not rewrite ledger history.
 
 ## Qualified and Unresolved Answers
 
-The deterministic v0.1 parser recognizes declared option keys. Anything beyond those keys is retained as qualification.
+The deterministic v0.1.1 parser recognizes declared option keys. Anything beyond those keys is retained as qualification.
 
 ```text
 A + C depending on context
@@ -91,21 +93,25 @@ The ledger supports explicit relations:
 - `supersedes`
 - `unresolved_conflict`
 
-There is no universal contradiction solver in v0.1. A caller or owner declares a relationship. When supersession is authorized, the ledger marks the earlier decision `SUPERSEDED`, points the newer decision back to it, retains both records, and appends a TRACE event.
+There is no universal contradiction solver. A caller or owner declares a relationship. When supersession is authorized, the ledger marks the earlier decision `SUPERSEDED`, points the newer decision back to it, retains both records, and appends a TRACE event.
+
+The workspace wires supersession to the concept registry. Any settled concept sourced from the replaced decision moves out of current state and into affected/unresolved state. The owner or caller must explicitly revise, deprecate, or retain it as unresolved. The system does not guess which semantic repair is correct.
 
 ## TRACE
 
 The local TRACE is an append-only sequence of inspectable records. It applies PSG provenance principles but is not represented as PSG’s code-level TRACE implementation.
 
-Implemented actions include project, round, and question registration; recommendation; owner selection; synthesis; decision registration; unresolved marking; supersession; concept registration and revision; and document generation.
+Implemented actions include project, round, and question registration; recommendation; owner selection; synthesis; decision registration; unresolved marking; supersession; concept registration, affected marking, revision, deprecation; and explicit document-generation recording.
 
-No authoritative decision or concept may be registered without source provenance.
+No authoritative decision may be accepted without a matching synthesis record in the actual local TRACE. Concept sources additionally require a matching ledger-registration event. A fake ID, wrong action, wrong entity, mismatched owner value, or synthesized-but-unregistered concept source is rejected.
 
 ## Core Concepts
 
 A core concept preserves more than a heading. Its record can carry stable identity, version, status, maturity, scope, definition, ownership boundaries, dependencies, relations, source decisions, unresolved seams, supersession, provenance, and TRACE references.
 
-v0.1 registers concepts from structured decisions. It does not infer ontologies from arbitrary prose. A concept revision retains a superseded historical record.
+Concept status and maturity use distinct vocabularies. The registry separates settled current concepts, affected/unresolved concepts, and historical versions. Revision provenance retains an original source, current-version source, and revision lineage.
+
+v0.1.1 registers concepts from structured decisions. It does not infer ontologies from arbitrary prose. A concept revision retains a superseded historical record.
 
 ## Application Binding and Living Documents
 
@@ -119,7 +125,9 @@ DOCUMENT BINDING
 HUMAN-READABLE APPLICATION SECTION
 ```
 
-The current renderer uses one generic application schema. It emits document identity, authority, concepts, current decisions, unresolved state, historical state, and TRACE. The Markdown is derived presentation, not an independent authority source.
+`ApplicationBinding` is foundational scaffolding only. It can describe a future mapping but does not yet alter placement or document consequences; project-specific binding remains deferred.
+
+The current pure renderer emits document identity, authority, settled concepts, current decisions, affected/unresolved concepts, historical state, and TRACE. It does not mutate TRACE. Two unchanged renders are byte-identical. A separate explicit operation may record `GENERATE_DOCUMENT` before rendering. Markdown is derived presentation, not an independent authority source.
 
 ## Operating Modes
 
@@ -134,15 +142,15 @@ The mode is represented in project state and TRACE. Automated mode-specific roun
 - `model.py`: semantic records and vocabularies.
 - `intake.py`: project intake and orchestration facade.
 - `rounds.py`: round/question registration and bounded answer intake.
-- `decisions.py`: synthesis, ledger, relationships, supersession, current state.
-- `concepts.py`: concept registry and traceable revision.
-- `documents.py`: generic application binding and living document renderer.
+- `decisions.py`: mapped synthesis, ledger, relationships, supersession, current state.
+- `concepts.py`: current/affected/history registries and traceable resolution.
+- `documents.py`: binding scaffolding, pure rendering, explicit generation events.
 - `trace.py`: append-only local provenance.
 - `demo.py`: deterministic end-to-end proof.
 
 ## Future Compiler Boundary
 
-`DocumentCompiler` reserves a small interface boundary for future current-context, implementation-prompt, design-specification, audit, and unresolved-register compilers. Only the living application document renderer is implemented in v0.1.
+`DocumentCompiler` reserves a small interface boundary for future current-context, implementation-prompt, design-specification, audit, and unresolved-register compilers. Only the living application document renderer is implemented.
 
 ## Non-Goals
 

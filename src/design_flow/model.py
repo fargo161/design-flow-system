@@ -35,6 +35,26 @@ class DecisionStatus(StrEnum):
     SUPERSEDED = "SUPERSEDED"
 
 
+class ConceptStatus(StrEnum):
+    """Whether a concept is operative, affected, or historical."""
+
+    CURRENT = "CURRENT"
+    UNRESOLVED = "UNRESOLVED"
+    DEPRECATED = "DEPRECATED"
+    SUPERSEDED = "SUPERSEDED"
+
+
+class ConceptMaturity(StrEnum):
+    """How well established a concept is, independent of its status."""
+
+    PROPOSED = "PROPOSED"
+    DEFINED = "DEFINED"
+    TESTED = "TESTED"
+    STABLE = "STABLE"
+    DISPUTED = "DISPUTED"
+    DEPRECATED = "DEPRECATED"
+
+
 class ConflictRelation(StrEnum):
     COMPATIBLE = "compatible"
     POTENTIAL_CONFLICT = "potential_conflict"
@@ -53,7 +73,9 @@ class TraceAction(StrEnum):
     MARK_UNRESOLVED = "MARK_UNRESOLVED"
     SUPERSEDE = "SUPERSEDE"
     REGISTER_CONCEPT = "REGISTER_CONCEPT"
+    MARK_CONCEPT_AFFECTED = "MARK_CONCEPT_AFFECTED"
     REVISE_CONCEPT = "REVISE_CONCEPT"
+    DEPRECATE_CONCEPT = "DEPRECATE_CONCEPT"
     GENERATE_DOCUMENT = "GENERATE_DOCUMENT"
 
 
@@ -148,7 +170,7 @@ class Project:
     description: str
     current_mode: DesignFlowMode
     authority: str
-    current_state_version: str = "0.1.0"
+    current_state_version: str = "0.1.1"
     source_context: tuple[str, ...] = ()
     unresolved_areas: list[str] = field(default_factory=list)
 
@@ -162,6 +184,7 @@ class DecisionProvenance:
     owner_qualifiers: tuple[str, ...]
     question_text: str = ""
     options: tuple[QuestionOption, ...] = ()
+    rule_source_value: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -202,8 +225,8 @@ class CoreConcept:
     concept_id: str
     canonical_name: str
     version: str
-    status: DecisionStatus
-    maturity: DecisionStatus
+    status: ConceptStatus
+    maturity: ConceptMaturity
     scope: str
     definition: str
     owns: tuple[str, ...] = ()
@@ -228,7 +251,7 @@ class CurrentDesignState:
 
 @dataclass(slots=True, frozen=True)
 class ApplicationBinding:
-    """A small seam between stable concept identity and document layout."""
+    """Non-consequence-bearing scaffold for a future binding layer."""
 
     schema_id: str
     concept_id: str

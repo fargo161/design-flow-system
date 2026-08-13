@@ -1,8 +1,8 @@
-"""Project intake and the small v0.1 orchestration surface."""
+"""Project intake and the small v0.1.1 orchestration surface."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Mapping
 
 from .concepts import CoreConceptRegistry
 from .decisions import CurrentStateCompiler, DecisionLedger, DecisionSynthesizer
@@ -29,8 +29,9 @@ class DesignFlowWorkspace:
         self.trace = TraceLog()
         self.rounds = RoundManager(project, self.trace)
         self.synthesizer = DecisionSynthesizer(self.trace)
-        self.ledger = DecisionLedger(self.trace)
         self.concepts = CoreConceptRegistry(self.trace)
+        self.ledger = DecisionLedger(self.trace)
+        self.ledger.add_supersession_listener(self.concepts.mark_affected_by_supersession)
         self.state_compiler = CurrentStateCompiler()
         self.document_renderer = LivingApplicationDocumentRenderer(self.trace)
         self.trace.record(
@@ -82,7 +83,7 @@ class DesignFlowWorkspace:
         *,
         decision_id: str,
         scope: str,
-        rule_builder: Callable[[OwnerAnswer], str],
+        rule_mapping: Mapping[str | tuple[str, ...], str],
         dependencies: tuple[str, ...] = (),
         unresolved_consequences: tuple[str, ...] = (),
     ) -> Decision:
@@ -91,7 +92,7 @@ class DesignFlowWorkspace:
             question_id,
             decision_id=decision_id,
             scope=scope,
-            rule_builder=rule_builder,
+            rule_mapping=rule_mapping,
             dependencies=dependencies,
             unresolved_consequences=unresolved_consequences,
         )
@@ -108,3 +109,7 @@ class DesignFlowWorkspace:
             self.concepts,
             self.ledger,
         )
+
+    def record_application_document_generation(self) -> str:
+        state = self.state_compiler.compile(self.project, self.ledger)
+        return self.document_renderer.record_generation(self.project, state)

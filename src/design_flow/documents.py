@@ -17,9 +17,9 @@ class DocumentCompiler(Protocol):
 
 
 class LivingApplicationDocumentRenderer:
-    """Render current semantic state through the default generic binding."""
+    """Pure renderer using a generic, non-consequence-bearing binding scaffold."""
 
-    schema_id = "design-flow.generic-application.v0.1"
+    schema_id = "design-flow.generic-application.v0.1.1"
 
     def __init__(self, trace: TraceLog) -> None:
         self.trace = trace
@@ -42,14 +42,6 @@ class LivingApplicationDocumentRenderer:
         ledger: DecisionLedger,
     ) -> str:
         document_id = f"{project.project_id}.LIVING_APPLICATION"
-        self.trace.record(
-            TraceAction.GENERATE_DOCUMENT,
-            "document",
-            document_id,
-            version=current_state.version,
-            schema_id=self.schema_id,
-        )
-
         lines = [
             f"# {project.name} — Living Application Document",
             "",
@@ -60,7 +52,7 @@ class LivingApplicationDocumentRenderer:
             "- Status: `FOUNDATIONAL`",
             f"- Scope: `{project.project_id}`",
             f"- Authority: {project.authority}",
-            f"- Application schema: `{self.schema_id}`",
+            f"- Binding scaffold: `{self.schema_id}` (`FOUNDATIONAL`; not consequence-bearing)",
             "",
             "## System / Project Thesis",
             "",
@@ -92,10 +84,7 @@ class LivingApplicationDocumentRenderer:
                     f"- Source decisions: {self._code_items(concept.source_decisions)}",
                     f"- Unresolved: {self._items(concept.unresolved)}",
                     f"- Supersedes: {self._code_items(concept.supersedes)}",
-                    f"- Provenance: round `{concept.provenance.get('source_round')}`, "
-                    f"question `{concept.provenance.get('source_question')}`, "
-                    f"owner answer `{self._joined(concept.provenance.get('owner_answer', []))}`, "
-                    f"recommendation was `{self._joined(concept.provenance.get('recommendation_was', []))}`",
+                    f"- Current provenance: {self._concept_provenance(concept.provenance)}",
                     f"- TRACE: {self._code_items(tuple(concept.trace_refs))}",
                     "",
                 ]
@@ -123,10 +112,27 @@ class LivingApplicationDocumentRenderer:
                 ]
             )
 
-        concept_unresolved = [item for concept in concepts.concepts for item in concept.unresolved]
+        concept_unresolved = [
+            item
+            for concept in (*concepts.concepts, *concepts.affected)
+            for item in concept.unresolved
+        ]
         unresolved = tuple(dict.fromkeys((*current_state.unresolved, *concept_unresolved)))
         lines.extend(["## Unresolved Register", ""])
         lines.extend(self._bullet_block(unresolved, "No unresolved items are currently registered."))
+
+        lines.extend(["## Affected / Unresolved Concepts", ""])
+        if not concepts.affected:
+            lines.extend(["No affected concepts await owner resolution.", ""])
+        for concept in concepts.affected:
+            lines.extend(
+                [
+                    f"- `{concept.concept_id}@{concept.version}` — status `{concept.status.value}`; "
+                    f"maturity `{concept.maturity.value}`; {self._items(concept.unresolved)}",
+                ]
+            )
+        if concepts.affected:
+            lines.append("")
 
         superseded = tuple(
             decision for decision in ledger.decisions if decision.status is DecisionStatus.SUPERSEDED
@@ -142,9 +148,12 @@ class LivingApplicationDocumentRenderer:
                 ]
             )
         for concept in concepts.history:
+            source = concept.provenance.get("current_source", {})
             lines.append(
                 f"- `{concept.concept_id}@{concept.version}` — {concept.definition} "
-                f"(status `{concept.status.value}`)"
+                f"(status `{concept.status.value}`; source decision "
+                f"`{source.get('source_decision') if isinstance(source, dict) else 'UNKNOWN'}`; "
+                f"TRACE `{source.get('trace_ref') if isinstance(source, dict) else 'UNKNOWN'}`)"
             )
         if superseded or concepts.history:
             lines.append("")
@@ -157,6 +166,17 @@ class LivingApplicationDocumentRenderer:
             )
         lines.append("")
         return "\n".join(lines)
+
+    def record_generation(self, project: Project, current_state: CurrentDesignState) -> str:
+        """Explicitly record generation without coupling mutation to rendering."""
+
+        return self.trace.record(
+            TraceAction.GENERATE_DOCUMENT,
+            "document",
+            f"{project.project_id}.LIVING_APPLICATION",
+            version=current_state.version,
+            schema_id=self.schema_id,
+        )
 
     @staticmethod
     def _joined(items: object) -> str:
@@ -177,6 +197,20 @@ class LivingApplicationDocumentRenderer:
         return "; ".join(
             f"`{getattr(item, 'key')}` {getattr(item, 'label')}" for item in items
         ) if items else "None registered"
+
+    @classmethod
+    def _concept_provenance(cls, provenance: dict[str, object]) -> str:
+        source = provenance.get("current_source", {})
+        if not isinstance(source, dict):
+            return "invalid provenance shape"
+        return (
+            f"decision `{source.get('source_decision')}`, "
+            f"round `{source.get('source_round')}`, "
+            f"question `{source.get('source_question')}`, "
+            f"owner answer `{cls._joined(source.get('owner_answer', []))}`, "
+            f"recommendation was `{cls._joined(source.get('recommendation_was', []))}`, "
+            f"TRACE `{source.get('trace_ref')}`"
+        )
 
     @staticmethod
     def _bullet_block(items: tuple[str, ...], empty: str) -> list[str]:
