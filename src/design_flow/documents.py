@@ -20,7 +20,7 @@ class DocumentCompiler(Protocol):
 class LivingApplicationDocumentRenderer:
     """Pure renderer using a generic, non-consequence-bearing binding scaffold."""
 
-    schema_id = "design-flow.generic-application.v0.1.1"
+    schema_id = "design-flow.generic-application.v0.2.0"
 
     def __init__(self, trace: TraceLog) -> None:
         self.trace = trace

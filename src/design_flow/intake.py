@@ -1,14 +1,16 @@
-"""Project intake and the small v0.1.1 orchestration surface."""
+"""Project intake and the canonical semantic orchestration surface."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Any
 
 from .concepts import CoreConceptRegistry
 from .decisions import CurrentStateCompiler, DecisionLedger, DecisionSynthesizer
 from .documents import LivingApplicationDocumentRenderer
 from .model import (
     CoreConcept,
+    ConflictRecord,
     Decision,
     DesignFlowMode,
     DesignRound,
@@ -16,6 +18,7 @@ from .model import (
     Project,
     Question,
     TraceAction,
+    TraceRecord,
 )
 from .rounds import RoundManager
 from .trace import TraceLog
@@ -72,6 +75,39 @@ class DesignFlowWorkspace:
             )
         )
 
+    @classmethod
+    def restore(
+        cls,
+        *,
+        project: Project,
+        trace_records: tuple[TraceRecord, ...],
+        rounds: tuple[DesignRound, ...],
+        decisions: tuple[Decision, ...],
+        relationships: tuple[ConflictRecord, ...],
+        current_concepts: tuple[CoreConcept, ...],
+        affected_concepts: tuple[CoreConcept, ...],
+        concept_history: tuple[CoreConcept, ...],
+    ) -> "DesignFlowWorkspace":
+        """Rehydrate a validated workspace without creating semantic events."""
+
+        workspace = cls.__new__(cls)
+        workspace.project = project
+        workspace.trace = TraceLog()
+        workspace.trace.restore(trace_records)
+        workspace.rounds = RoundManager(project, workspace.trace)
+        workspace.rounds.restore(rounds)
+        workspace.synthesizer = DecisionSynthesizer(workspace.trace)
+        workspace.ledger = DecisionLedger(workspace.trace)
+        workspace.ledger.restore(decisions, relationships)
+        workspace.concepts = CoreConceptRegistry(workspace.trace, workspace.ledger.get)
+        workspace.concepts.restore(current_concepts, affected_concepts, concept_history)
+        workspace.ledger.add_supersession_listener(
+            workspace.concepts.mark_affected_by_supersession
+        )
+        workspace.state_compiler = CurrentStateCompiler()
+        workspace.document_renderer = LivingApplicationDocumentRenderer(workspace.trace)
+        return workspace
+
     def start_round(self, design_round: DesignRound) -> DesignRound:
         return self.rounds.register_round(design_round)
 
@@ -103,8 +139,8 @@ class DesignFlowWorkspace:
         )
         return self.ledger.register(decision)
 
-    def register_concept_from_decision(self, decision: Decision, **fields: object) -> CoreConcept:
-        return self.concepts.register_from_decision(decision, **fields)  # type: ignore[arg-type]
+    def register_concept_from_decision(self, decision: Decision, **fields: Any) -> CoreConcept:
+        return self.concepts.register_from_decision(decision, **fields)
 
     def render_application_document(self) -> str:
         state = self.state_compiler.compile(self.project, self.ledger)

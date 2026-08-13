@@ -241,7 +241,7 @@ class Project:
     description: str
     current_mode: DesignFlowMode
     authority: str
-    current_state_version: str = "0.1.1"
+    current_state_version: str = "0.2.0"
     source_context: tuple[str, ...] = ()
     unresolved_areas: list[str] = field(default_factory=list)
 

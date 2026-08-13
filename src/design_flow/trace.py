@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+import re
 from typing import Any
 
 from .model import (
@@ -19,6 +20,7 @@ class TraceLog:
 
     def __init__(self) -> None:
         self._records: list[TraceRecord] = []
+        self._next_sequence = 1
 
     def record(
         self,
@@ -27,7 +29,7 @@ class TraceLog:
         entity_id: str,
         **details: Any,
     ) -> str:
-        trace_id = f"trace-{len(self._records) + 1:04d}"
+        trace_id = f"trace-{self._next_sequence:04d}"
         self._records.append(
             TraceRecord(
                 trace_id=trace_id,
@@ -37,7 +39,25 @@ class TraceLog:
                 details=freeze_semantic_value(details),
             )
         )
+        self._next_sequence += 1
         return trace_id
+
+    def restore(self, records: tuple[TraceRecord, ...]) -> None:
+        """Restore validated historical records without fabricating new TRACE."""
+
+        seen: set[str] = set()
+        previous = 0
+        for record in records:
+            match = re.fullmatch(r"trace-(\d+)", record.trace_id)
+            if match is None:
+                raise ValueError(f"Invalid TRACE identifier: {record.trace_id}")
+            sequence = int(match.group(1))
+            if record.trace_id in seen or sequence <= previous:
+                raise ValueError("TRACE identifiers must be unique and chronologically increasing")
+            seen.add(record.trace_id)
+            previous = sequence
+        self._records = list(records)
+        self._next_sequence = previous + 1
 
     @property
     def records(self) -> tuple[TraceRecord, ...]:

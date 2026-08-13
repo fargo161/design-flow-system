@@ -55,6 +55,21 @@ class CoreConceptRegistry:
 
         return tuple(self._history)
 
+    def restore(
+        self,
+        current: tuple[CoreConcept, ...],
+        affected: tuple[CoreConcept, ...],
+        history: tuple[CoreConcept, ...],
+    ) -> None:
+        """Restore separated concept state without emitting lifecycle events."""
+
+        active_ids = [item.concept_id for item in (*current, *affected)]
+        if len(set(active_ids)) != len(active_ids):
+            raise ValueError("Current and affected concept identifiers must be unique")
+        self._current = {item.concept_id: item for item in current}
+        self._affected = {item.concept_id: item for item in affected}
+        self._history = list(history)
+
     def get(self, concept_id: str) -> CoreConcept:
         if concept_id in self._current:
             return self._current[concept_id]
@@ -69,6 +84,7 @@ class CoreConceptRegistry:
         concept_id: str,
         canonical_name: str,
         definition: str,
+        version: str = "0.1.1",
         maturity: ConceptMaturity = ConceptMaturity.DEFINED,
         owns: tuple[str, ...] = (),
         does_not_own: tuple[str, ...] = (),
@@ -96,7 +112,7 @@ class CoreConceptRegistry:
         concept = CoreConcept(
             concept_id=concept_id,
             canonical_name=canonical_name,
-            version="0.1.1",
+            version=version,
             status=status,
             maturity=maturity,
             scope=decision.scope,

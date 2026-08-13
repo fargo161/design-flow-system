@@ -87,7 +87,7 @@ def main() -> None:
     assert "MOVEMENT_TARGET_IDENTITY" in markdown
     assert decision.trace_refs
 
-    print("DESIGN FLOW SYSTEM v0.1.1 — DETERMINISTIC DEMO")
+    print("DESIGN FLOW SYSTEM v0.2.0 — DETERMINISTIC DEMO")
     print("Recommendation preserved: A")
     print("Owner answer preserved: B")
     print(f"Authoritative decision: {decision.authoritative_value[0]}")

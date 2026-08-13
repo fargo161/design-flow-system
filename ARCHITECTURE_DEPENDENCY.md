@@ -18,7 +18,7 @@ dependency_direction:
 
 ## Relationship
 
-The Design Flow System is a separate downstream application of Periodic Semantic Grammar (PSG). The relationship in v0.1.x is architectural and semantic: this repository adopts PSG-informed distinctions without vendoring PSG, forking PSG, using a submodule, or claiming code-level integration.
+The Design Flow System is a separate downstream application of Periodic Semantic Grammar (PSG). The relationship in v0.2 remains architectural and semantic: this repository adopts PSG-informed distinctions without vendoring PSG, forking PSG, using a submodule, adding a PSG runtime dependency, or claiming code-level integration.
 
 PSG is not modified by this repository. The pinned commit identifies the architectural baseline against which this foundation was designed.
 
@@ -46,7 +46,11 @@ PSG is not modified by this repository. The pinned commit identifies the archite
 - Immutable local concept and TRACE snapshots
 - Core-concept registration, revision, deprecation, maturity, and provenance lineage
 - Living application document generation
-- Future implementation, context, specification, and audit compiler boundaries
+- Deterministic project persistence, manifests, hashing, activation, and recovery
+- Non-authoritative sessions and draft working state
+- Context-handoff and next-round recommendation compilation
+- Optional proposal-only LLM and command-runner boundaries
+- Future implementation, specification, and audit compiler boundaries
 
 ## Upstream Proposal Rule
 

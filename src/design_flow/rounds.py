@@ -78,6 +78,13 @@ class RoundManager:
     def rounds(self) -> tuple[DesignRound, ...]:
         return tuple(self._rounds.values())
 
+    def restore(self, rounds: tuple[DesignRound, ...]) -> None:
+        """Restore authoritative round history without emitting TRACE."""
+
+        if len({item.round_id for item in rounds}) != len(rounds):
+            raise ValueError("Round identifiers must be unique")
+        self._rounds = {item.round_id: item for item in rounds}
+
     def register_round(self, design_round: DesignRound) -> DesignRound:
         if design_round.round_id in self._rounds:
             raise ValueError(f"Round already exists: {design_round.round_id}")
@@ -126,6 +133,10 @@ class RoundManager:
     def record_owner_answer(self, round_id: str, question_id: str, raw_value: str) -> OwnerAnswer:
         design_round = self.get(round_id)
         question = design_round.question(question_id)
+        if question.owner_answer is not None:
+            raise ValueError(
+                "Owner answer history is immutable; edit a draft or create a superseding decision"
+            )
         answer = parse_owner_answer(
             raw_value,
             allowed_values=question.option_keys,

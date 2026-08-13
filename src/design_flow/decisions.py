@@ -131,6 +131,18 @@ class DecisionLedger:
     def relationships(self) -> tuple[ConflictRecord, ...]:
         return tuple(self._relationships)
 
+    def restore(
+        self,
+        decisions: tuple[Decision, ...],
+        relationships: tuple[ConflictRecord, ...],
+    ) -> None:
+        """Restore ledger history without replaying semantic operations."""
+
+        if len({item.decision_id for item in decisions}) != len(decisions):
+            raise ValueError("Decision identifiers must be unique")
+        self._decisions = {item.decision_id: item for item in decisions}
+        self._relationships = list(relationships)
+
     def get(self, decision_id: str) -> Decision:
         try:
             return self._decisions[decision_id]

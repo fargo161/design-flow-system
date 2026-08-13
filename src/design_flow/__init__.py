@@ -27,6 +27,20 @@ from .model import (
 )
 from .rounds import RoundManager, parse_owner_answer
 from .trace import TraceLog
+from .handoff import RoundRecommendation, compile_context_handoff, recommend_next_round
+from .llm import LLMAdapter, LLMUnavailableError, request_draft
+from .persistence import ProjectStore, ProjectValidationError, SourceReference
+from .project import PersistentProject, SessionBrief
+from .runner import CommandRunner
+from .session import (
+    DraftConceptAction,
+    DraftConceptPlan,
+    DraftDecisionPlan,
+    DraftPreview,
+    DraftQuestion,
+    DraftRound,
+    SessionRecord,
+)
 
 __all__ = [
     "ApplicationBinding",
@@ -57,6 +71,25 @@ __all__ = [
     "TraceLog",
     "TraceRecord",
     "parse_owner_answer",
+    "CommandRunner",
+    "DraftConceptAction",
+    "DraftConceptPlan",
+    "DraftDecisionPlan",
+    "DraftPreview",
+    "DraftQuestion",
+    "DraftRound",
+    "LLMAdapter",
+    "LLMUnavailableError",
+    "PersistentProject",
+    "ProjectStore",
+    "ProjectValidationError",
+    "RoundRecommendation",
+    "SessionBrief",
+    "SessionRecord",
+    "SourceReference",
+    "compile_context_handoff",
+    "recommend_next_round",
+    "request_draft",
 ]
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
