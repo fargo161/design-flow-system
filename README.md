@@ -186,6 +186,10 @@ For a no-install source-tree check, set `$env:PYTHONPATH='src'` and run the same
 
 The package has no runtime dependencies beyond Python 3.12 or newer.
 
+## Continuous Integration
+
+GitHub Actions CI runs the full unittest suite, deterministic demo, and package build on pushes to `main` and `codex/**` branches, and on pull requests targeting `main`.
+
 ## Repository Layout
 
 ```text
